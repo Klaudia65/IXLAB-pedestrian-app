@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Seoul Walk — pedestrian exploration prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #E7E0D2;
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  #root { width: 100%; }
+  button { font-family: inherit; }
+  input { font-family: inherit; }
+
+  /* hide scrollbars inside the phone but keep scroll */
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  * { scrollbar-width: none; }
+
+  /* screen transition */
+  @keyframes screenIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.992); }
+    to   { opacity: 1; transform: none; }
+  }
+  .screen-in { animation: screenIn .42s cubic-bezier(.22,1,.36,1); }
+
+  /* marching-ants wander ring */
+  @keyframes dashMarch { to { stroke-dashoffset: -40; } }
+  .zone-ring { animation: dashMarch 6s linear infinite; }
+
+  /* you-are-here pulse */
+  @keyframes youPulse {
+    0%, 100% { transform: scale(1); opacity: 0.22; }
+    50%      { transform: scale(1.5); opacity: 0.05; }
+  }
+  .you-pulse { transform-box: fill-box; transform-origin: center; animation: youPulse 2.6s ease-in-out infinite; }
+
+  /* radar sweep (Background mode) */
+  @keyframes radarSpin { to { transform: rotate(360deg); } }
+  .radar-sweep { animation: radarSpin 4.5s linear infinite; }
+
+  /* route draw-in (Follow / Modify) */
+  @keyframes routeDraw { from { stroke-dasharray: 240; stroke-dashoffset: 240; } to { stroke-dasharray: 240; stroke-dashoffset: 0; } }
+  .route-draw { animation: routeDraw 0.85s ease-out; }
+
+  /* image-slot empty-state styling so placeholders look intentional */
+  image-slot {
+    --is-bg: var(--card-2);
+    background: var(--card-2);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .screen-in, .zone-ring, .you-pulse, .radar-sweep, .route-draw { animation: none !important; }
+    * { transition: none !important; }
+  }
+</style>
+<link id="gfont-Righteous" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Righteous:wght@300;400;500;600;700&amp;display=swap">
+<link id="gfont-Lato" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;500;600;700&amp;display=swap">
+</head>
+<body style="font-family: &quot;Lato&quot;">
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="assets/image-slot.js"></script>
+
+<script type="text/babel" src="app/theme.jsx"></script>
+<script type="text/babel" src="app/frame.jsx"></script>
+<script type="text/babel" src="app/swipe.jsx"></script>
+<script type="text/babel" src="app/sliders.jsx"></script>
+<script type="text/babel" src="app/words.jsx"></script>
+<script type="text/babel" src="app/map.jsx"></script>
+<script type="text/babel" src="app/map2.jsx"></script>
+<script type="text/babel" src="app/social.jsx"></script>
+<script type="text/babel" src="app/group.jsx"></script>
+<script type="text/babel" src="app/groupWords.jsx"></script>
+<script type="text/babel" src="app/app.jsx"></script>
+</body>
+</html>

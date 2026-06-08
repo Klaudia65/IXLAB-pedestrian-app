@@ -1,0 +1,81 @@
+/* ============================================================
+   WANDER · COLOR TOKENS
+   "Structured Fluidity" — soft glowing data + crisp geometry
+   ============================================================ */
+
+:root {
+  /* ---- Base palette (raw brand hues) ---- */
+  --ivory:    #C1EBE9;  /* canvas / background (teal)    */
+  --cobalt:   #4456FF;  /* primary accent / controls    */
+  --mint:     #A6FFE8;  /* main safe path               */
+  --lime:     #C9FF46;  /* preference match             */
+  --liliac:   #9FA3FF;  /* secondary / alternate path   */
+  --orchid:   #D238EB;  /* specialized / alert POI      */
+  --seaweed:  #255A4B;  /* structural text              */
+
+  /* ---- Cobalt ramp (controls, focus, links) ---- */
+  --cobalt-100: #E3E6FF;
+  --cobalt-200: #C2C8FF;
+  --cobalt-400: #7B86FF;
+  --cobalt-500: #4456FF;
+  --cobalt-600: #2D3CE0;
+  --cobalt-700: #1E29AE;
+
+  /* ---- Seaweed ramp (text, structure) ---- */
+  --seaweed-900: #143229;
+  --seaweed-700: #1C463A;
+  --seaweed-500: #255A4B;
+  --seaweed-300: #5E8A7C;
+  --seaweed-100: #B7CFC7;
+
+  /* ---- Ivory ramp (surfaces) — soft teal canvas ---- */
+  --ivory-pure: #C1EBE9;
+  --ivory-soft: #D3F1EF;
+  --ivory-deep: #AADEDB;
+
+  /* ---- Outing personalities (3 slightly-shifted accents) ---- */
+  --outing-solo:    #4456FF;  /* cobalt — focused, calm    */
+  --outing-couple:  #8A5BFF;  /* iris   — intimate, warm   */
+  --outing-friends: #B84BFF;  /* mauve  — social, lively   */
+  --outing-solo-soft:    #C7CDFF;
+  --outing-couple-soft:  #DDD0FF;
+  --outing-friends-soft: #ECCFFF;
+
+  /* ---- Translucent washes (radar mist / glows) ---- */
+  --wash-mint:   rgba(166, 255, 232, 0.55);
+  --wash-lime:   rgba(201, 255, 70, 0.45);
+  --wash-liliac: rgba(159, 163, 255, 0.45);
+  --wash-orchid: rgba(210, 56, 235, 0.40);
+  --wash-cobalt: rgba(68, 86, 255, 0.35);
+
+  /* ============================================================
+     SEMANTIC ALIASES — author UI against these
+     ============================================================ */
+  --bg-canvas:        var(--ivory-pure);
+  --surface-card:     #FFFFFFEE;
+  --surface-raised:   var(--ivory-soft);
+  --surface-overlay:  rgba(193, 235, 233, 0.74);
+  --surface-glass:    rgba(193, 235, 233, 0.58);
+
+  --text-strong:      var(--seaweed-900);
+  --text-body:        var(--seaweed-500);
+  --text-muted:       var(--seaweed-300);
+  --text-on-accent:   var(--ivory-pure);
+  --text-inverse:     var(--ivory-pure);
+
+  --accent:           var(--cobalt-500);
+  --accent-hover:     var(--cobalt-600);
+  --accent-press:     var(--cobalt-700);
+  --accent-soft:      var(--cobalt-100);
+
+  --border-hairline:  rgba(37, 90, 75, 0.16);
+  --border-control:   var(--cobalt-500);
+  --border-muted:     rgba(37, 90, 75, 0.28);
+
+  /* ---- Map semantics ---- */
+  --path-primary:     var(--mint);
+  --path-preference:  var(--lime);
+  --path-alternate:   var(--liliac);
+  --poi-alert:        var(--orchid);
+  --poi-default:      var(--seaweed-500);
+}

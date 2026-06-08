@@ -1,0 +1,54 @@
+<!-- @dsCard group="Components" viewport="700x420" name="Map · Mist, Routes, POIs" subtitle="Ambient mist, pill routes, selectable POIs" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../../styles.css">
+<style>
+  body { margin: 0; background: var(--bg-canvas); font-family: var(--font-ui); }
+  #root { padding: 0; }
+  .scene {
+    position: relative; height: 420px; overflow: hidden;
+    background:
+      linear-gradient(var(--border-hairline) 1px, transparent 1px) 0 0 / 40px 40px,
+      linear-gradient(90deg, var(--border-hairline) 1px, transparent 1px) 0 0 / 40px 40px,
+      var(--bg-canvas);
+  }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { RadarMist, MapRoute, POIChip } = window.WanderStructuredFluidityDS_140bd8;
+  function Scene() {
+    const [sel, setSel] = React.useState(true);
+    return (
+      <div className="scene">
+        <RadarMist color="mint" size={360} style={{ top: -40, left: -20 }} />
+        <RadarMist color="lime" size={240} intensity={0.5} style={{ bottom: -30, right: 60 }} />
+        <RadarMist color="orchid" size={180} intensity={0.4} style={{ top: 30, right: -20 }} />
+        <MapRoute variant="alternate" points={[[8,88],[40,78],[72,30],[92,18]]} />
+        <MapRoute variant="preference" points={[[8,88],[28,58],[54,52],[78,22],[92,14]]} active />
+        <div style={{ position:"absolute", left: 26, bottom: 28 }}>
+          <POIChip label="Start · You" />
+        </div>
+        <div style={{ position:"absolute", left: 250, top: 150 }}>
+          <POIChip label="Maple Café" meta="180 m · on route" selected={sel} onClick={()=>setSel(s=>!s)} />
+        </div>
+        <div style={{ position:"absolute", right: 40, top: 40 }}>
+          <POIChip label="Late Pharmacy" alert />
+        </div>
+        <div style={{ position:"absolute", right: 60, bottom: 60 }}>
+          <POIChip label="Riverside Park" />
+        </div>
+      </div>
+    );
+  }
+  ReactDOM.createRoot(document.getElementById("root")).render(<Scene/>);
+</script>
+</body>
+</html>

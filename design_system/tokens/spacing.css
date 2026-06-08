@@ -1,0 +1,38 @@
+/* ============================================================
+   WANDER · SPACING, RADII & SIZING TOKENS
+   Pill-first geometry — controls are fully rounded.
+   ============================================================ */
+
+:root {
+  /* ---- Spacing scale (4px base) ---- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---- Radii — pill is the default control shape ---- */
+  --radius-pill:  999px;   /* buttons, inputs, chips, toggles */
+  --radius-lg:    28px;    /* sheets, large cards             */
+  --radius-md:    18px;    /* cards, overlays                 */
+  --radius-sm:    12px;    /* tight chips, small surfaces     */
+
+  /* ---- Control sizing ---- */
+  --control-h:        56px;   /* standard button / input height */
+  --control-h-sm:     44px;   /* compact controls (min touch)   */
+  --control-pad-x:    24px;
+  --hit-min:          44px;   /* minimum touch target           */
+
+  /* ---- Borders ---- */
+  --stroke-control:   2px;    /* outline weight on controls     */
+  --stroke-hairline:  1px;
+
+  /* ---- Layout ---- */
+  --gutter:        20px;
+  --sheet-max-w:   440px;  /* mobile sheet width               */
+}

@@ -1,0 +1,25 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Map Semantics" subtitle="Path + POI meanings on the map canvas" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin: 0; background: var(--bg-canvas); font-family: var(--font-mono); }
+  .wrap { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; padding: 24px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .stroke { height: 8px; flex: 1; border-radius: 999px; }
+  .item { }
+  .lbl { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-strong); font-weight: 700; margin-bottom: 10px; }
+  .dot { width: 26px; height: 26px; border-radius: 999px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="item"><div class="lbl">Primary · Mint</div><div class="stroke" style="background:var(--mint);box-shadow:var(--glow-mint)"></div></div>
+    <div class="item"><div class="lbl">Preference · Lime</div><div class="stroke" style="background:var(--lime);box-shadow:var(--glow-lime)"></div></div>
+    <div class="item"><div class="lbl">Alternate · Liliac</div><div class="stroke" style="height:4px;margin:2px 0;background:var(--liliac);opacity:0.7"></div></div>
+    <div class="item"><div class="lbl">Alert POI · Orchid</div><div class="dot" style="background:var(--orchid);box-shadow:var(--glow-orchid)"></div></div>
+  </div>
+</body>
+</html>

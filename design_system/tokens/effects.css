@@ -1,0 +1,49 @@
+/* ============================================================
+   WANDER · EFFECTS — glow, blur, shadow, motion
+   The "fluid" half of Structured Fluidity lives here.
+   ============================================================ */
+
+:root {
+  /* ---- Gaussian blur stops (radar mist) ---- */
+  --blur-mist-lg:  80px;   /* large ambient AOI fields        */
+  --blur-mist-md:  48px;
+  --blur-glass:    18px;   /* frosted overlays / sheets       */
+  --blur-soft:     8px;
+
+  /* ---- Glow (path + POI emphasis) ---- */
+  --glow-mint:   0 0 24px rgba(166, 255, 232, 0.85), 0 0 48px rgba(166, 255, 232, 0.45);
+  --glow-lime:   0 0 24px rgba(201, 255, 70, 0.80),  0 0 52px rgba(201, 255, 70, 0.40);
+  --glow-cobalt: 0 0 20px rgba(68, 86, 255, 0.55);
+  --glow-orchid: 0 0 22px rgba(210, 56, 235, 0.60), 0 0 44px rgba(210, 56, 235, 0.30);
+
+  /* ---- Elevation shadows (soft, low-contrast on ivory) ---- */
+  --shadow-sheet:  0 -8px 40px rgba(37, 90, 75, 0.12);
+  --shadow-card:   0 4px 20px rgba(37, 90, 75, 0.10);
+  --shadow-raised: 0 8px 28px rgba(37, 90, 75, 0.14);
+  --shadow-press:  0 2px 8px rgba(37, 90, 75, 0.12) inset;
+
+  /* ---- Stroke widths for map paths ---- */
+  --path-w-primary:   8px;   /* recommended route — bold       */
+  --path-w-alternate: 4px;   /* alternate — thinner            */
+
+  /* ---- Motion ---- */
+  --ease-fluid:   cubic-bezier(0.22, 1, 0.36, 1);   /* @kind other */  /* soft settle  */
+  --ease-crisp:   cubic-bezier(0.65, 0, 0.35, 1);   /* @kind other */  /* control snap */
+  --ease-glow:    cubic-bezier(0.4, 0, 0.6, 1);     /* @kind other */  /* pulse        */
+  --dur-fast:     140ms;  /* @kind other */
+  --dur-base:     240ms;  /* @kind other */
+  --dur-slow:     420ms;  /* @kind other */
+  --dur-pulse:    2400ms; /* @kind other */
+}
+
+/* Ambient mist breathing keyframes (used by RadarMist) */
+@keyframes wander-mist-breathe {
+  0%, 100% { opacity: 0.78; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.06); }
+}
+
+/* Glow intensify pulse for paths crossing a mist zone */
+@keyframes wander-path-pulse {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(201,255,70,0.5)); }
+  50%      { filter: drop-shadow(0 0 18px rgba(201,255,70,0.95)); }
+}

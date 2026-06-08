@@ -1,0 +1,24 @@
+<!-- @dsCard group="Colors" viewport="700x190" name="Outing Personalities" subtitle="Three shifted accents — solo, couple, friends" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin: 0; background: var(--bg-canvas); font-family: var(--font-mono); }
+  .wrap { display: flex; gap: 16px; padding: 24px; }
+  .card { flex: 1; border-radius: var(--radius-lg); padding: 18px; position: relative; overflow: hidden; border: 1px solid var(--border-hairline); background: var(--surface-card); }
+  .orb { width: 56px; height: 56px; border-radius: 999px; filter: blur(2px); }
+  .glow { position: absolute; width: 120px; height: 120px; border-radius: 999px; right: -30px; top: -30px; filter: blur(36px); opacity: 0.6; }
+  .lbl { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-strong); font-weight: 700; margin-top: 14px; }
+  .hex { font-size: 11px; color: var(--text-muted); margin-top: 3px; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card"><div class="glow" style="background:var(--outing-solo)"></div><div class="orb" style="background:var(--outing-solo)"></div><div class="lbl">Solo</div><div class="hex">#4456FF · focused</div></div>
+    <div class="card"><div class="glow" style="background:var(--outing-couple)"></div><div class="orb" style="background:var(--outing-couple)"></div><div class="lbl">Couple</div><div class="hex">#8A5BFF · intimate</div></div>
+    <div class="card"><div class="glow" style="background:var(--outing-friends)"></div><div class="orb" style="background:var(--outing-friends)"></div><div class="lbl">Friends</div><div class="hex">#B84BFF · social</div></div>
+  </div>
+</body>
+</html>

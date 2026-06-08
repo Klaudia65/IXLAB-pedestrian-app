@@ -1,0 +1,44 @@
+/* ============================================================
+   WANDER · TYPOGRAPHY TOKENS
+   Display/UI: Space Grotesk · Data/POI: Space Mono
+   ============================================================ */
+
+:root {
+  /* ---- Families ---- */
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-ui:      "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-mono:    "Space Mono", "SF Mono", ui-monospace, monospace;
+
+  /* ---- Weights ---- */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-bold:     700;
+
+  /* ---- Type scale (px, fluid-friendly) ---- */
+  --text-display:  44px;  /* hero numerals, big arrival times */
+  --text-title:    30px;  /* screen titles                    */
+  --text-heading:  22px;  /* section headings                 */
+  --text-body-lg:  18px;
+  --text-base:     16px;
+  --text-sm:       14px;
+  --text-xs:       12px;
+
+  /* ---- POI / data type (monospace, tracked, uppercase) ---- */
+  --mono-poi:      13px;
+  --mono-label:    11px;
+  --track-poi:     0.12em;   /* letter-spacing for uppercase mono */
+  --track-label:   0.18em;
+
+  /* ---- Line heights ---- */
+  --leading-tight:  1.05;
+  --leading-snug:   1.2;
+  --leading-normal: 1.45;
+}
+
+/* Convenience utility roles */
+.t-display { font-family: var(--font-display); font-size: var(--text-display); font-weight: var(--weight-bold); line-height: var(--leading-tight); letter-spacing: -0.02em; color: var(--text-strong); }
+.t-title   { font-family: var(--font-display); font-size: var(--text-title);   font-weight: var(--weight-bold); line-height: var(--leading-snug);  letter-spacing: -0.01em; color: var(--text-strong); }
+.t-heading { font-family: var(--font-display); font-size: var(--text-heading); font-weight: var(--weight-medium); line-height: var(--leading-snug); color: var(--text-strong); }
+.t-body    { font-family: var(--font-ui); font-size: var(--text-base); font-weight: var(--weight-regular); line-height: var(--leading-normal); color: var(--text-body); }
+.t-poi     { font-family: var(--font-mono); font-size: var(--mono-poi); font-weight: var(--weight-bold); letter-spacing: var(--track-poi); text-transform: uppercase; color: var(--text-strong); }
+.t-label   { font-family: var(--font-mono); font-size: var(--mono-label); font-weight: var(--weight-regular); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--text-muted); }

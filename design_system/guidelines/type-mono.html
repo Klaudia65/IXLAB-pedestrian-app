@@ -1,0 +1,21 @@
+<!-- @dsCard group="Type" viewport="700x180" name="Mono · POI & Labels" subtitle="Space Mono, uppercase + tracked, for map data" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin: 0; background: var(--bg-canvas); padding: 28px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+  .cap { display: inline-flex; align-items: center; padding: 9px 16px; border-radius: 999px; background: var(--surface-card); border: 1px solid var(--border-hairline); }
+  .cap.sel { border: 2px solid var(--cobalt); border-radius: 14px; box-shadow: var(--glow-cobalt); }
+  .meta { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); width: 100%; }
+</style>
+</head>
+<body>
+  <span class="meta">POI capsules · default & selected · label</span>
+  <span class="cap t-poi">Maple Café</span>
+  <span class="cap t-poi">Riverside Park</span>
+  <span class="cap sel t-poi" style="color:var(--cobalt)">Old Town Gate</span>
+  <span class="cap t-label" style="border:none;background:none;padding:0">320 m ahead · left</span>
+</body>
+</html>

@@ -1,0 +1,11 @@
+/* ============================================================
+   WANDER · WEBFONTS
+   Display/UI : Space Grotesk
+   Data/POI   : Space Mono
+   ------------------------------------------------------------
+   NOTE: fonts are loaded from Google Fonts' CDN. For a fully
+   self-hosted, offline-safe system, replace the @import below
+   with local @font-face rules pointing at copied .woff2 files.
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap");
