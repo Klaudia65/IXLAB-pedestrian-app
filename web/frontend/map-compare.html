@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Comparaison cartes — Kakao vs MapLibre · Ikseon-dong</title>
+
+<!-- MapLibre GL JS (chargé depuis un CDN, comme le reste de ton app) -->
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+<style>
+  :root{
+    --paper:#f4efe7; --ink:#221f1a; --ink-soft:#6b6357; --line:#e0d8cb;
+    --accent:#e0603a; --card:#fffdf9; --good:#5e7c62;
+    --font: -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);}
+  header{padding:18px 22px 12px;}
+  header .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);}
+  header h1{margin:4px 0 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;}
+  header p{margin:0;font-size:13px;color:var(--ink-soft);}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:8px 22px 22px;}
+  @media (max-width:820px){ .grid{grid-template-columns:1fr;} }
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;
+         box-shadow:0 10px 30px -22px rgba(0,0,0,.5);display:flex;flex-direction:column;}
+  .panel .bar{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);}
+  .panel .bar b{font-size:14px;}
+  .panel .bar .tag{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+        color:var(--ink-soft);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 9px;}
+  .map{position:relative;height:520px;width:100%;background:#e9e3d8;}
+  .placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:10px;text-align:center;padding:26px;background:repeating-linear-gradient(45deg,#efe9df,#efe9df 12px,#eae3d7 12px,#eae3d7 24px);}
+  .placeholder h3{margin:0;font-size:15px;}
+  .placeholder p{margin:0;font-size:12.5px;color:var(--ink-soft);max-width:320px;line-height:1.5;}
+  .placeholder code{font-family:var(--mono);font-size:11.5px;background:var(--card);border:1px solid var(--line);padding:2px 6px;border-radius:6px;}
+  .btnrow{display:flex;gap:6px;padding:10px 14px;border-top:1px solid var(--line);flex-wrap:wrap;}
+  .btnrow button{font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--line);
+        background:var(--paper);color:var(--ink);border-radius:999px;padding:7px 12px;}
+  .btnrow button.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  .note{padding:0 22px 30px;font-size:13px;color:var(--ink-soft);line-height:1.6;max-width:900px;}
+  .note b{color:var(--ink);}
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:10px;padding:8px 11px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kick">익선동 · Ikseon-dong · comparatif</div>
+  <h1>Vraie carte à la place du dessin SVG</h1>
+  <p>Même lieu, deux moteurs de carte. Point orange = « vous êtes ici ». Les pastilles café viennent des données Kakao, posées à l'identique sur les deux cartes.</p>
+</header>
+
+<div style="padding:0 22px 12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  <button id="cafe-btn" style="font:700 12px system-ui,sans-serif;cursor:pointer;border:none;background:#6f4e37;color:#fff;border-radius:999px;padding:8px 14px">Rechercher les cafés (Kakao)</button>
+  <span id="cafe-status" style="font-size:12.5px;color:var(--ink-soft)">La carte Kakao se charge, puis les cafés apparaissent…</span>
+</div>
+
+<div class="grid">
+  <!-- ============ KAKAO ============ -->
+  <div class="panel">
+    <div class="bar"><b>🅰️ Kakao Map</b><span class="tag">données Corée</span></div>
+    <div class="map" id="kakaomap">
+      <div class="placeholder" id="kakao-ph">
+        <h3>🔑 Colle ta clé JavaScript Kakao</h3>
+        <p>Ouvre ce fichier et remplace <code>KAKAO_JS_KEY = ''</code> par ta clé JS,
+           puis enregistre <code>http://localhost:8731</code> dans la console Kakao
+           (Plateforme → Web → domaine du site). Recharge : la vraie carte Kakao apparaît ici.</p>
+      </div>
+    </div>
+    <div class="btnrow" id="kakao-btns" style="display:none">
+      <button id="k-roadmap" class="on">Plan</button>
+      <button id="k-hybrid">Satellite</button>
+    </div>
+  </div>
+
+  <!-- ============ MAPLIBRE ============ -->
+  <div class="panel">
+    <div class="bar"><b>🅱️ MapLibre GL</b><span class="tag">open source · stylable</span></div>
+    <div class="map" id="mlmap"></div>
+    <div class="btnrow">
+      <button id="m-heat" class="on">Heatmap découverte</button>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>Ce que tu compares :</b> les pastilles marron sont de <b>vrais cafés</b> (API Kakao Local), posés aux mêmes
+  coordonnées sur les deux cartes. À droite, MapLibre est repeint dans la palette du <b>design system</b>
+  (fond <i>vectoriel</i> OpenFreeMap) et surmonté d'une <b>heatmap « potentiel de découverte »</b> — données
+  <b>fictives</b>, juste pour l'aperçu visuel.
+  <br><br>
+  ⚠️ Le stylage complet est possible ici parce que le fond est <i>vectoriel</i> (chaque type d'élément est recolorable),
+  contrairement au <i>raster</i>. Afficher des POI Kakao sur MapLibre reste une zone grise des CGU Kakao en production.
+</div>
+
+<script>
+  // ⬇️⬇️⬇️  COLLE TA CLÉ JAVASCRIPT KAKAO ICI (entre les quotes)  ⬇️⬇️⬇️
+  const KAKAO_JS_KEY = '7713dfb272dc80af5410a8d4db85bf56';
+  // ⬆️⬆️⬆️ ------------------------------------------------------ ⬆️⬆️⬆️
+
+  // Centre : cœur du village hanok d'Ikseon-dong
+  const CENTER = { lat: 37.5737, lng: 126.9906 };
+  // état partagé pour la couche "cafés" (mêmes données affichées sur les deux cartes)
+  let kakaoMap = null;                       // référence à la carte Kakao une fois créée
+  const cafeLayer = { kakao: [], ml: [] };   // marqueurs à effacer avant chaque nouvelle recherche
+
+  /* ---------------- MAPLIBRE — style "design system" (vecteur, sans clé) ----------------
+     Fond vectoriel OpenFreeMap (schéma OpenMapTiles) repeint dans la palette hanok.
+     Le vecteur, contrairement au raster, permet de colorer chaque type d'élément. */
+  const PAL = {
+    land: '#f0e9dd', water: '#c3d0cc', green: '#d2dcc3',
+    building: '#e7dbc7', buildingLine: '#d9ccb6',
+    roadCase: '#e2d9ca', road: '#fffdf9',
+    ink: '#221f1a', inkSoft: '#6b6357', accent: '#e0603a'
+  };
+  const hanokStyle = {
+    version: 8,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: { omt: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': PAL.land } },
+      { id: 'green', type: 'fill', source: 'omt', 'source-layer': 'landcover',
+        filter: ['in', 'class', 'wood', 'grass', 'scrub', 'park'],
+        paint: { 'fill-color': PAL.green, 'fill-opacity': 0.7 } },
+      { id: 'park', type: 'fill', source: 'omt', 'source-layer': 'park',
+        paint: { 'fill-color': PAL.green, 'fill-opacity': 0.55 } },
+      { id: 'water', type: 'fill', source: 'omt', 'source-layer': 'water',
+        paint: { 'fill-color': PAL.water } },
+      { id: 'building', type: 'fill', source: 'omt', 'source-layer': 'building', minzoom: 13,
+        paint: { 'fill-color': PAL.building, 'fill-outline-color': PAL.buildingLine, 'fill-opacity': 0.9 } },
+      { id: 'road-case', type: 'line', source: 'omt', 'source-layer': 'transportation',
+        filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': PAL.roadCase, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 16, 10, 18, 22] } },
+      { id: 'road', type: 'line', source: 'omt', 'source-layer': 'transportation',
+        filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': PAL.road, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 7, 18, 16] } },
+      { id: 'path', type: 'line', source: 'omt', 'source-layer': 'transportation',
+        filter: ['in', 'class', 'path', 'pedestrian', 'track'],
+        paint: { 'line-color': PAL.accent, 'line-dasharray': [2, 2], 'line-opacity': 0.45,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.6, 18, 2.5] } },
+      { id: 'place', type: 'symbol', source: 'omt', 'source-layer': 'place',
+        filter: ['in', 'class', 'suburb', 'neighbourhood', 'quarter'],
+        layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 13, 10, 17, 15],
+          'text-transform': 'uppercase', 'text-letter-spacing': 0.12 },
+        paint: { 'text-color': PAL.inkSoft, 'text-halo-color': PAL.land, 'text-halo-width': 1.4 } }
+    ]
+  };
+  const ml = new maplibregl.Map({
+    container: 'mlmap', style: hanokStyle,
+    center: [CENTER.lng, CENTER.lat], zoom: 16.2, attributionControl: { compact: true }
+  });
+  ml.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
+
+  // marqueur "vous êtes ici"
+  new maplibregl.Marker({ color: PAL.accent })
+    .setLngLat([CENTER.lng, CENTER.lat])
+    .setPopup(new maplibregl.Popup().setText('Vous êtes ici'))
+    .addTo(ml);
+  // (les cafés réels sont ajoutés par searchCafes(), une fois Kakao prêt)
+
+  /* ---- Heatmap "potentiel de découverte" (données FICTIVES, juste pour l'aperçu) ----
+     Points groupés autour de quelques foyers chauds, avec un poids w par point. */
+  function makeDiscoveryPoints() {
+    const hot = [[126.9906, 37.5737], [126.9890, 37.5745], [126.9920, 37.5728], [126.9900, 37.5722]];
+    const feats = [];
+    let seed = 42; const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    hot.forEach((c, hi) => {
+      const n = 12 + Math.floor(rnd() * 8);
+      for (let i = 0; i < n; i++) {
+        const lng = c[0] + (rnd() - 0.5) * 0.006;
+        const lat = c[1] + (rnd() - 0.5) * 0.005;
+        feats.push({ type: 'Feature', properties: { w: Math.max(0.15, 0.9 - hi * 0.08 - rnd() * 0.3) },
+          geometry: { type: 'Point', coordinates: [lng, lat] } });
+      }
+    });
+    return { type: 'FeatureCollection', features: feats };
+  }
+
+  ml.on('load', () => {
+    ml.addSource('discovery', { type: 'geojson', data: makeDiscoveryPoints() });
+    ml.addLayer({
+      id: 'discovery-heat', type: 'heatmap', source: 'discovery',
+      paint: {
+        'heatmap-weight': ['get', 'w'],
+        'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 17, 1.4],
+        'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 12, 18, 17, 48],
+        'heatmap-opacity': 0.72,
+        'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'],
+          0, 'rgba(0,0,0,0)',
+          0.2, 'rgba(94,124,98,0.35)',
+          0.4, 'rgba(242,193,78,0.60)',
+          0.6, 'rgba(232,150,58,0.78)',
+          0.85, '#e0603a',
+          1, '#c0432a']
+      }
+    }, 'place'); // insérée sous les libellés de lieux
+  });
+
+  // toggle heatmap
+  const mHeat = document.getElementById('m-heat');
+  if (mHeat) mHeat.onclick = () => {
+    const on = mHeat.classList.toggle('on');
+    if (ml.getLayer('discovery-heat'))
+      ml.setLayoutProperty('discovery-heat', 'visibility', on ? 'visible' : 'none');
+  };
+
+  /* ---------------- KAKAO (si clé fournie) ---------------- */
+  function initKakao(){
+    kakao.maps.load(() => {
+      document.getElementById('kakao-ph').style.display = 'none';
+      document.getElementById('kakao-btns').style.display = 'flex';
+      const container = document.getElementById('kakaomap');
+      kakaoMap = new kakao.maps.Map(container, {
+        center: new kakao.maps.LatLng(CENTER.lat, CENTER.lng),
+        level: 3
+      });
+      kakaoMap.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+
+      // "vous êtes ici"
+      new kakao.maps.Marker({ map: kakaoMap, position: new kakao.maps.LatLng(CENTER.lat, CENTER.lng) });
+
+      // Kakao prêt → on cherche les cafés et on les pose sur les DEUX cartes
+      searchCafes();
+
+      document.getElementById('k-roadmap').onclick = () => {
+        kakaoMap.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
+        document.getElementById('k-roadmap').classList.add('on');
+        document.getElementById('k-hybrid').classList.remove('on');
+      };
+      document.getElementById('k-hybrid').onclick = () => {
+        kakaoMap.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
+        document.getElementById('k-hybrid').classList.add('on');
+        document.getElementById('k-roadmap').classList.remove('on');
+      };
+    });
+  }
+
+  /* ---------------- Recherche de CAFÉS (Kakao Local via le SDK) ----------------
+     CE7 = code de catégorie "café". Le SDK renvoie x=lng, y=lat + place_name.
+     On efface la couche précédente, puis on pose les MÊMES points sur les deux cartes. */
+  const COFFEE = '#6f4e37';
+  function clearCafes() {
+    cafeLayer.kakao.forEach(o => o.setMap(null));
+    cafeLayer.ml.forEach(m => m.remove());
+    cafeLayer.kakao = []; cafeLayer.ml = [];
+  }
+  function setStatus(txt) { const el = document.getElementById('cafe-status'); if (el) el.textContent = txt; }
+
+  function searchCafes() {
+    if (!kakaoMap || !kakao.maps.services) { setStatus('Kakao pas encore prêt…'); return; }
+    setStatus('Recherche des cafés…');
+    clearCafes();
+    const places = new kakao.maps.services.Places();
+    const center = new kakao.maps.LatLng(CENTER.lat, CENTER.lng);
+    places.categorySearch('CE7', (data, status) => {
+      if (status !== kakao.maps.services.Status.OK) { setStatus('Aucun café trouvé (' + status + ')'); return; }
+      data.forEach(p => {
+        const lat = parseFloat(p.y), lng = parseFloat(p.x);
+
+        // sur Kakao : CustomOverlay stylée (illustre la personnalisation des overlays)
+        const el = document.createElement('div');
+        el.textContent = p.place_name;
+        el.style.cssText = 'background:' + COFFEE + ';color:#fff;font:600 11px/1 system-ui,sans-serif;'
+          + 'padding:4px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3)';
+        cafeLayer.kakao.push(new kakao.maps.CustomOverlay({
+          map: kakaoMap, position: new kakao.maps.LatLng(lat, lng), content: el, xAnchor: 0.5, yAnchor: 1.3 }));
+
+        // sur MapLibre : le MÊME point, marqueur couleur café + popup
+        cafeLayer.ml.push(new maplibregl.Marker({ color: COFFEE })
+          .setLngLat([lng, lat])
+          .setPopup(new maplibregl.Popup({ offset: 18 }).setText(p.place_name))
+          .addTo(ml));
+      });
+      setStatus(data.length + ' cafés (données Kakao) affichés à l’identique sur les deux cartes');
+    }, { location: center, radius: 500, sort: kakao.maps.services.SortBy.DISTANCE });
+  }
+
+  const cafeBtn = document.getElementById('cafe-btn');
+  if (cafeBtn) cafeBtn.onclick = searchCafes;
+
+  if (KAKAO_JS_KEY) {
+    const s = document.createElement('script');
+    s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?autoload=false&libraries=services&appkey=' + KAKAO_JS_KEY;
+    s.onload = initKakao;
+    s.onerror = () => { document.getElementById('kakao-ph').innerHTML =
+      '<h3>❌ Domaine non autorisé</h3><p>Enregistre <code>http://127.0.0.1:8731</code> dans Kakao ' +
+      '(Plateforme → Web → domaine du site) <b>et</b> ouvre cette page via ' +
+      '<code>http://127.0.0.1:8731/…</code> (pas <code>localhost</code>).</p>'; };
+    document.head.appendChild(s);
+  }
+</script>
+</body>
+</html>
