@@ -82,7 +82,7 @@ function Segmented({ items, value, onChange, dense }) {
 
 }
 
-const ThemeCtx = React.createContext(THEMES.inkwell);
+const ThemeCtx = React.createContext(THEMES.wander);
 
 // ---- the phone shell ----
 function DeviceFrame({ theme, children }) {
@@ -109,65 +109,42 @@ function DeviceFrame({ theme, children }) {
 
 // ---- control dock (lives OUTSIDE the phone) ----
 const SCREENS = [
+{ id: 'landing', n: '0', name: 'Landing' },
 { id: 'swipe', n: '1A', name: 'Swipe' },
 { id: 'sliders', n: '1B', name: 'Sliders' },
-{ id: 'words', n: '1C', name: 'Words' },
-{ id: 'map', n: '2', name: 'Area map' },
-{ id: 'map2', n: '2B', name: 'Map · detailed' },
+{ id: 'map2', n: '2', name: 'Map · detailed' },
 { id: 'social', n: '3A', name: 'Social' },
-{ id: 'group', n: '3B', name: 'Group · axes' },
-{ id: 'groupWords', n: '3C', name: 'Group · words' }];
+{ id: 'group', n: '3B', name: 'Group · axes' }];
 
 
-function Dock({ screen, setScreen, themeId, setThemeId }) {
+function Dock({ screen, setScreen }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, width: 230, flex: '0 0 auto',
-      fontFamily: "'Hanken Grotesk', system-ui, sans-serif", color: '#2A2722' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: 230, flex: '0 0 auto',
+      fontFamily: "'Space Grotesk', 'Segoe UI', system-ui, sans-serif", color: '#255A4B' }}>
       <div>
-        <div style={{ fontFamily: "'Newsreader', serif", fontSize: 26, lineHeight: 1.05, color: '#1E1B16', fontWeight: 500 }}>Seoul Walk</div>
-        <div style={{ fontSize: 12.5, color: '#7A7363', marginTop: 4, lineHeight: 1.45 }}>A walking companion that learns your spatial taste. Pick an aesthetic, step through the flow.</div>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700, color: '#A79E8B', marginBottom: 9 }}>Aesthetic</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {THEME_ORDER.map((id) => {
-            const th = THEMES[id];const on = id === themeId;
-            const sw = th.vars;
-            return (
-              <button key={id} onClick={() => setThemeId(id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', cursor: 'pointer',
-                borderRadius: 14, textAlign: 'left', width: '100%',
-                border: on ? '1.5px solid #1E1B16' : '1.5px solid #DDD4C1',
-                background: on ? '#fff' : 'rgba(255,255,255,0.5)', transition: 'border-color .15s' }}>
-                <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', flex: '0 0 auto', boxShadow: '0 1px 3px rgba(0,0,0,0.15)' }}>
-                  {[sw['--paper'], sw['--accent'], sw['--a1'], sw['--a2']].map((c, i) =>
-                  <div key={i} style={{ width: 13, height: 30, background: c }} />
-                  )}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: '#1E1B16' }}>{th.name}</div>
-                  <div style={{ fontSize: 10.5, color: '#7A7363', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{th.tagline}</div>
-                </div>
-              </button>);
-
-          })}
+        {/* wander wordmark — lowercase Space Grotesk + cobalt dot (DS brand) */}
+        <div style={{ display: 'inline-flex', alignItems: 'baseline', fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          fontSize: 34, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, color: '#143229' }}>
+          explore
+          <span style={{ width: 10, height: 10, borderRadius: 999, background: '#4456FF', marginLeft: 3,
+            alignSelf: 'flex-end', marginBottom: 5, boxShadow: '0 0 14px rgba(68,86,255,0.55)' }} />
         </div>
+        <div style={{ fontSize: 12.5, color: '#5E8A7C', marginTop: 8, lineHeight: 1.45 }}>A walking companion that learns your spatial taste and personalizes each walk. Step through the flow.</div>
       </div>
 
       <div>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700, color: '#A79E8B', marginBottom: 9 }}>Screen</div>
+        <div style={{ fontFamily: "'Space Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 400, color: '#5E8A7C', marginBottom: 9 }}>Screen</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
           {SCREENS.map((s) => {
             const on = s.id === screen;
             return (
               <button key={s.id} onClick={() => setScreen(s.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', cursor: 'pointer',
-                borderRadius: 11, textAlign: 'left',
-                border: on ? '1.5px solid #1E1B16' : '1.5px solid #DDD4C1',
-                background: on ? '#1E1B16' : 'rgba(255,255,255,0.5)',
-                color: on ? '#F1EBDE' : '#2A2722', transition: 'all .15s' }}>
-                <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7, fontVariantNumeric: 'tabular-nums' }}>{s.n}</span>
+                borderRadius: 999, textAlign: 'left', fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                border: on ? '1.5px solid #4456FF' : '1.5px solid rgba(37,90,75,0.20)',
+                background: on ? '#4456FF' : 'rgba(255,255,255,0.55)',
+                color: on ? '#FFFFFF' : '#255A4B', transition: 'all .15s' }}>
+                <span style={{ fontFamily: "'Space Mono', ui-monospace, monospace", fontSize: 10, fontWeight: 700, opacity: 0.7, fontVariantNumeric: 'tabular-nums' }}>{s.n}</span>
                 <span style={{ fontSize: 12.5, fontWeight: 600 }}>{s.name}</span>
               </button>);
 
@@ -175,7 +152,7 @@ function Dock({ screen, setScreen, themeId, setThemeId }) {
         </div>
       </div>
 
-      <div style={{ fontSize: 11, color: '#A79E8B', lineHeight: 1.5, borderTop: '1px solid #DDD4C1', paddingTop: 14 }}>
+      <div style={{ fontSize: 11, color: '#5E8A7C', lineHeight: 1.5, borderTop: '1px solid rgba(37,90,75,0.16)', paddingTop: 14 }}>
         Tip: on the swipe deck, drag your own CC0 Seoul photos onto the empty cards — they persist.
       </div>
     </div>);

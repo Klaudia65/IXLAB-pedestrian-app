@@ -83,7 +83,7 @@ function SocialScreen({ go }) {
       </div>
 
       <div style={{ paddingTop: 14 }}>
-        <PrimaryBtn onClick={() => (mode === 'group' ? go('group') : go('map'))}>
+        <PrimaryBtn onClick={() => (mode === 'group' ? go('group') : go('map2'))}>
           {mode === 'solo' ? 'Explore solo' : mode === 'couple' ? 'Explore as a couple' : 'Merge our group →'}
         </PrimaryBtn>
       </div>

@@ -134,7 +134,7 @@ function SwipeScreen({ go }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '6px 22px 18px', minHeight: 0 }}>
-      <Label>Step 1 of 3 · Teach me your taste</Label>
+      <Label>Step 1 of 2 · Teach me your taste</Label>
       <h1 style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, letterSpacing: t.headTrack,
         fontSize: 27, lineHeight: 1.08, margin: '8px 0 0', color: 'var(--ink)' }}>Swipe the streets<br/>that feel like you</h1>
 

@@ -2,11 +2,11 @@
    APP — routing, theme context, onboarding chrome, transitions
    ============================================================ */
 
-const ONBOARDING = ['swipe', 'sliders', 'words'];
+const ONBOARDING = ['swipe', 'sliders'];
 
 function OnboardingChrome({ screen, go, children }) {
   const t = React.useContext(ThemeCtx);
-  const tabs = [{ id: 'swipe', name: 'Swipe' }, { id: 'sliders', name: 'Sliders' }, { id: 'words', name: 'Words' }];
+  const tabs = [{ id: 'swipe', name: 'Swipe' }, { id: 'sliders', name: 'Sliders' }];
   return (
     <React.Fragment>
       <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 22px 4px' }}>
@@ -21,7 +21,7 @@ function OnboardingChrome({ screen, go, children }) {
             );
           })}
         </div>
-        <button onClick={() => go('map')} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: t.fontUI, fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)' }}>Skip to map ↦</button>
+        <button onClick={() => go('map2')} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: t.fontUI, fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)' }}>Skip to map ↦</button>
       </div>
       {children}
     </React.Fragment>
@@ -29,27 +29,25 @@ function OnboardingChrome({ screen, go, children }) {
 }
 
 function App() {
-  const [themeId, setThemeId] = usePersist('themeId', 'inkwell');
-  const [screen, setScreen] = usePersist('screen', 'swipe');
-  const theme = THEMES[themeId] || THEMES.inkwell;
+  const [themeId, setThemeId] = usePersist('themeId', 'wander');
+  const [screen, setScreen] = usePersist('screen', 'landing');
+  const theme = THEMES[themeId] || THEMES.wander;
   const go = id => setScreen(id);
 
   const screens = {
+    landing: <LandingScreen go={go} />,
     swipe: <SwipeScreen go={go} />,
     sliders: <SlidersScreen go={go} />,
-    words: <WordsScreen go={go} />,
-    map: <MapScreen />,
     map2: <MapScreen2 />,
     social: <SocialScreen go={go} />,
     group: <GroupScreen go={go} />,
-    groupWords: <GroupWordsScreen go={go} />,
   };
   const isOnboard = ONBOARDING.includes(screen);
 
   return (
     <ThemeCtx.Provider value={theme}>
       <div style={{ minHeight: '100vh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: 54, padding: 40, boxSizing: 'border-box', background: 'radial-gradient(120% 120% at 50% 0%, #F3EEE4 0%, #E7E0D2 70%, #DED6C5 100%)' }}>
+        gap: 54, padding: 40, boxSizing: 'border-box', background: 'radial-gradient(120% 120% at 50% 0%, #F0FAFA 0%, #DFF1F1 68%, #CDE9E9 100%)' }}>
         <Dock screen={screen} setScreen={setScreen} themeId={themeId} setThemeId={setThemeId} />
         <DeviceFrame theme={theme}>
           <StatusBar />
