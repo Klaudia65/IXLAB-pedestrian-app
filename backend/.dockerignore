@@ -1,0 +1,6 @@
+# keep the image small and clean
+.venv
+__pycache__
+*.pyc
+.env
+offline

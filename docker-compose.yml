@@ -1,0 +1,38 @@
+# Full local stack: PostGIS database + FastAPI backend, on one private network.
+# This is also the shape you'll later deploy to the cloud.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: lab_user
+      POSTGRES_PASSWORD: ixlab6531
+      POSTGRES_DB: explore
+    ports:
+      - "5432:5432"                      # reachable from host tools (collector) at localhost:5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data  # data survives container restarts
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  # runs on first init
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_user -d explore"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app          # live code: edits reload without rebuilding the image
+    environment:
+      # inside the compose network the DB host is the service name "db"
+      DATABASE_URL: postgresql+asyncpg://lab_user:ixlab6531@db:5432/explore
+      DEBUG: "true"
+      VECTOR_DIM: "64"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy       # wait until Postgres is ready
+
+volumes:
+  pgdata:

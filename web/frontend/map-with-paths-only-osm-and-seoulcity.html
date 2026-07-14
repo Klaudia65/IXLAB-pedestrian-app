@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Réseau piéton — OSM (graphe) + Séoul (drapeaux) · zone d'étude</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+<style>
+  :root{
+    --paper:#f4efe7; --ink:#221f1a; --ink-soft:#6b6357; --line:#e0d8cb;
+    --accent:#e0603a; --card:#fffdf9;
+    --font: -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);}
+  header{padding:18px 22px 10px;}
+  header .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);}
+  header h1{margin:4px 0 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;}
+  header p{margin:0;font-size:13px;color:var(--ink-soft);max-width:840px;line-height:1.5;}
+  .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 22px 12px;}
+  .controls button{font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--line);
+        background:var(--paper);color:var(--ink);border-radius:999px;padding:7px 13px;}
+  .controls button.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  #status{font-size:12.5px;color:var(--ink-soft);}
+  .map{position:relative;height:74vh;min-height:460px;width:100%;background:#e9e3d8;}
+  .legends{display:flex;gap:26px;flex-wrap:wrap;padding:12px 22px 26px;}
+  .legend b{display:block;font-size:12px;margin-bottom:6px;}
+  .legend span.row{display:block;font-size:11.5px;color:var(--ink-soft);line-height:1.9;}
+  .swatch{display:inline-block;width:18px;height:4px;vertical-align:middle;margin-right:6px;border-radius:2px;}
+  .swatch.dash{height:0;border-top:3px dashed;border-radius:0;}
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:10px;padding:8px 11px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kick">zone d'étude · Bukchon–Anguk–Insadong · Jongno-gu</div>
+  <h1>Le graphe piéton : OSM (base) + drapeaux Séoul-ville</h1>
+  <p>Le réseau <b>OSM</b> est notre graphe d'analyse (415 km ; plus grand bloc ~97 %, fragments conservés), coloré par type de voie.
+     Le réseau <b>Séoul-ville</b> est <b>masqué par défaut</b> : active-le pour voir ses attributs (passages
+     piétons, parcs). Il se superpose à OSM car les deux décrivent les mêmes rues — c'est normal (voir note en bas).</p>
+</header>
+
+<div class="controls">
+  <button id="t-osm" class="on">Réseau OSM (graphe)</button>
+  <button id="t-seoul">Drapeaux Séoul-ville</button>
+  <span id="status">Chargement…</span>
+</div>
+
+<div class="map" id="map"></div>
+
+<div class="legends">
+  <div class="legend">
+    <b>OSM — le graphe, par type de voie</b>
+    <span class="row"><span class="swatch" style="background:#2980b9"></span>chemin piéton — footway / path / pedestrian (166 km)</span>
+    <span class="row"><span class="swatch" style="background:#b8b0a2"></span>rue marchable — residential / service / primaire… (242 km)</span>
+    <span class="row"><span class="swatch" style="background:#e0603a"></span>escaliers — steps (7 km)</span>
+  </div>
+  <div class="legend">
+    <b>Séoul-ville — drapeaux (masqué par défaut)</b>
+    <span class="row"><span class="swatch" style="background:#8e44ad"></span>passage piéton (166)</span>
+    <span class="row"><span class="swatch" style="background:#5e7c62"></span>parc (19)</span>
+    <span class="row"><span class="swatch" style="background:#b9a88f;opacity:.5"></span>voie piétonne ordinaire (~4700, estompée)</span>
+    <span class="row" style="font-style:italic">ponts (15) / tunnels (1) : quasi absents ici</span>
+  </div>
+</div>
+
+<script>
+  // Study-area bounding box (same as the analysis pipeline): W, S, E, N.
+  const BBOX = [126.97869, 37.56623, 127.01052, 37.58646];
+
+  // ---- Base map: OpenFreeMap vector, repainted in the "hanok" palette --------
+  const PAL = { land:'#f0e9dd', water:'#c3d0cc', green:'#d2dcc3',
+    building:'#e7dbc7', buildingLine:'#d9ccb6', roadCase:'#e2d9ca', road:'#fffdf9',
+    inkSoft:'#6b6357' };
+  const baseStyle = {
+    version: 8,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: { omt: { type:'vector', url:'https://tiles.openfreemap.org/planet' } },
+    layers: [
+      { id:'bg', type:'background', paint:{ 'background-color':PAL.land } },
+      { id:'green', type:'fill', source:'omt', 'source-layer':'landcover',
+        filter:['in','class','wood','grass','scrub','park'],
+        paint:{ 'fill-color':PAL.green, 'fill-opacity':0.7 } },
+      { id:'park', type:'fill', source:'omt', 'source-layer':'park',
+        paint:{ 'fill-color':PAL.green, 'fill-opacity':0.55 } },
+      { id:'water', type:'fill', source:'omt', 'source-layer':'water',
+        paint:{ 'fill-color':PAL.water } },
+      { id:'building', type:'fill', source:'omt', 'source-layer':'building', minzoom:13,
+        paint:{ 'fill-color':PAL.building, 'fill-outline-color':PAL.buildingLine, 'fill-opacity':0.9 } },
+      { id:'road-case', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.roadCase, 'line-width':['interpolate',['linear'],['zoom'],12,1.5,16,10,18,22] } },
+      { id:'road', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.road, 'line-width':['interpolate',['linear'],['zoom'],12,0.6,16,7,18,16] } },
+      { id:'place', type:'symbol', source:'omt', 'source-layer':'place',
+        filter:['in','class','suburb','neighbourhood','quarter'],
+        layout:{ 'text-field':['get','name'], 'text-font':['Noto Sans Regular'],
+          'text-size':['interpolate',['linear'],['zoom'],13,10,17,15],
+          'text-transform':'uppercase','text-letter-spacing':0.12 },
+        paint:{ 'text-color':PAL.inkSoft, 'text-halo-color':PAL.land, 'text-halo-width':1.4 } }
+    ]
+  };
+
+  const map = new maplibregl.Map({
+    container:'map', style:baseStyle,
+    bounds:[[BBOX[0],BBOX[1]],[BBOX[2],BBOX[3]]], fitBoundsOptions:{ padding:24 },
+    attributionControl:{ compact:true }
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass:true }), 'top-right');
+
+  const statusEl = document.getElementById('status');
+  const setStatus = (m) => { statusEl.textContent = m; };
+  let osmCount = 0, seoulCount = 0;
+  const report = () => setStatus(`${osmCount} tronçons OSM · ${seoulCount} liens Séoul (masqués).`);
+
+  // Bucket an OSM highway tag (which may be a comma-joined string) into 3 classes.
+  function osmKind(h) {
+    h = String(h || '');
+    if (h.includes('steps')) return 'steps';
+    if (h.includes('footway') || h.includes('path') || h.includes('pedestrian')) return 'pedestrian';
+    return 'street';
+  }
+
+  map.on('load', () => {
+    // ===== Seoul layer FIRST (drawn under OSM), hidden by default =============
+    map.addSource('seoul-net', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    map.addLayer({
+      id:'seoul-net-line', type:'line', source:'seoul-net',
+      layout:{ 'line-cap':'round','line-join':'round', visibility:'none' },
+      paint:{
+        'line-color':['case',
+          ['get','is_crosswalk'], '#8e44ad',   // purple — crosswalk
+          ['get','in_park'],      '#5e7c62',   // green  — park
+          '#b9a88f'],                           // tan    — ordinary walkway
+        // Flagged links (crosswalk/park) read as "flags": thicker + opaque.
+        // Ordinary links stay thin & faint so they don't drown the map.
+        // NB: line-dasharray can't be data-driven in MapLibre, so we separate
+        // the two by width + opacity instead of solid-vs-dashed.
+        // MapLibre allows only ONE zoom-based interpolate per property, so the
+        // zoom interpolation is the outer expression and the flag `case` is
+        // nested at each stop (a non-zoom subexpression, which is allowed).
+        'line-width':['interpolate',['linear'],['zoom'],
+          13,['case',['any',['get','is_crosswalk'],['get','in_park']],2,0.6],
+          16,['case',['any',['get','is_crosswalk'],['get','in_park']],3.5,1.6],
+          19,['case',['any',['get','is_crosswalk'],['get','in_park']],6,3]],
+        'line-opacity':['case', ['any',['get','is_crosswalk'],['get','in_park']], 0.95, 0.45]
+      }
+    }, 'place');
+
+    // ===== OSM streets + pedestrian (steps handled by a separate top layer) ===
+    map.addSource('osm-net', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    map.addLayer({
+      id:'osm-net-line', type:'line', source:'osm-net',
+      filter:['!=',['get','kind'],'steps'],
+      layout:{ 'line-cap':'round','line-join':'round' },
+      paint:{
+        'line-color':['match',['get','kind'], 'pedestrian','#2980b9', /* street */ '#b8b0a2'],
+        // pedestrian a touch thicker than plain streets so it reads clearly
+        'line-width':['interpolate',['linear'],['zoom'],
+          13, ['match',['get','kind'],'pedestrian',1.6,1.0],
+          16, ['match',['get','kind'],'pedestrian',3.2,2.2],
+          19, ['match',['get','kind'],'pedestrian',6,4]],
+        'line-opacity':['match',['get','kind'],'pedestrian',0.95,0.75]
+      }
+    }, 'place');
+
+    // ===== OSM steps ON TOP so the 7 km of stairs stay visible ================
+    map.addLayer({
+      id:'osm-steps-line', type:'line', source:'osm-net',
+      filter:['==',['get','kind'],'steps'],
+      layout:{ 'line-cap':'round','line-join':'round' },
+      paint:{
+        'line-color':'#e0603a',
+        'line-width':['interpolate',['linear'],['zoom'],13,2,16,4,19,7],
+        'line-opacity':1
+      }
+    }, 'place');
+
+    // ---- Load the OSM network (add a `kind` property for coloring/filtering) ----
+    fetch('network-osm.geojson').then(r => r.json()).then(gj => {
+      (gj.features || []).forEach(f => { f.properties.kind = osmKind(f.properties.highway); });
+      map.getSource('osm-net').setData(gj);
+      osmCount = (gj.features || []).length; report();
+    }).catch(e => { console.error(e); setStatus('⚠️ network-osm.geojson introuvable.'); });
+
+    // ---- Load the Seoul network (already carries the flag properties) ----
+    fetch('network-seoul.geojson').then(r => r.json()).then(gj => {
+      map.getSource('seoul-net').setData(gj);
+      seoulCount = (gj.features || []).length; report();
+    }).catch(e => { console.error(e); });
+
+    // ---- Popups ----
+    map.on('click', 'osm-net-line', (e) => showOsmPopup(e));
+    map.on('click', 'osm-steps-line', (e) => showOsmPopup(e));
+    function showOsmPopup(e){
+      const p = e.features[0].properties;
+      new maplibregl.Popup({ offset:8 }).setLngLat(e.lngLat)
+        .setHTML(`<b>OSM · ${p.name || 'voie piétonne'}</b><br>${p.highway}<br>${Math.round(p.length||0)} m`)
+        .addTo(map);
+    }
+    map.on('click', 'seoul-net-line', (e) => {
+      const p = e.features[0].properties;
+      const on = (v) => v === true || v === 'true';
+      const tags = [];
+      if (on(p.is_crosswalk)) tags.push('passage piéton');
+      if (on(p.in_park))      tags.push('parc');
+      if (on(p.is_bridge))    tags.push('pont');
+      if (on(p.is_tunnel))    tags.push('tunnel');
+      new maplibregl.Popup({ offset:8 }).setLngLat(e.lngLat)
+        .setHTML(`<b>Séoul · ${p.emd_nm || ''}</b><br>${tags.length ? tags.join(', ') : 'voie piétonne ordinaire'}`)
+        .addTo(map);
+    });
+    ['osm-net-line','osm-steps-line','seoul-net-line'].forEach(id => {
+      map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+    });
+  });
+
+  // ---- Toggles (OSM = its two layers) ----
+  function wireToggle(btnId, layerIds) {
+    const btn = document.getElementById(btnId);
+    btn.onclick = () => {
+      const on = btn.classList.toggle('on');
+      layerIds.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id,'visibility', on?'visible':'none'); });
+    };
+  }
+  wireToggle('t-osm', ['osm-net-line','osm-steps-line']);
+  wireToggle('t-seoul', ['seoul-net-line']);
+</script>
+</body>
+</html>

@@ -59,23 +59,7 @@
 </div>
 
 <div class="grid">
-  <!-- ============ KAKAO ============ -->
-  <div class="panel">
-    <div class="bar"><b>🅰️ Kakao Map</b><span class="tag">données Corée</span></div>
-    <div class="map" id="kakaomap">
-      <div class="placeholder" id="kakao-ph">
-        <h3>🔑 Colle ta clé JavaScript Kakao</h3>
-        <p>Ouvre ce fichier et remplace <code>KAKAO_JS_KEY = ''</code> par ta clé JS,
-           puis enregistre <code>http://localhost:8731</code> dans la console Kakao
-           (Plateforme → Web → domaine du site). Recharge : la vraie carte Kakao apparaît ici.</p>
-      </div>
-    </div>
-    <div class="btnrow" id="kakao-btns" style="display:none">
-      <button id="k-roadmap" class="on">Plan</button>
-      <button id="k-hybrid">Satellite</button>
-    </div>
-  </div>
-
+  
   <!-- ============ MAPLIBRE ============ -->
   <div class="panel">
     <div class="bar"><b>🅱️ MapLibre GL</b><span class="tag">open source · stylable</span></div>
@@ -97,9 +81,6 @@
 </div>
 
 <script>
-  // ⬇️⬇️⬇️  COLLE TA CLÉ JAVASCRIPT KAKAO ICI (entre les quotes)  ⬇️⬇️⬇️
-  const KAKAO_JS_KEY = '7713dfb272dc80af5410a8d4db85bf56';
-  // ⬆️⬆️⬆️ ------------------------------------------------------ ⬆️⬆️⬆️
 
   // Centre : cœur du village hanok d'Ikseon-dong
   const CENTER = { lat: 37.5737, lng: 126.9906 };
@@ -211,6 +192,57 @@
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': PAL.accent, 'line-width': 4, 'line-dasharray': [1.6, 1.2], 'line-opacity': 0.95 }
     }, 'place');
+
+    // ---- POI vivants : PostGIS -> FastAPI -> carte ----
+const API = 'http://localhost:8000';
+
+// 1) source vide au départ ; on la remplira depuis l'API
+ml.addSource('pois', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+// 2) une couche de cercles par famille (filtre côté carte sur la propriété category)
+const FAMILIES = [
+  ['nature', '#5e7c62'], ['culture', '#b0894a'], ['food', '#e0603a'],
+  ['social', '#6b7fa3'], ['urban_texture', '#9c6b8e']
+];
+FAMILIES.forEach(([fam, color]) => {
+  ml.addLayer({
+    id: 'poi-' + fam, type: 'circle', source: 'pois',
+    filter: ['==', ['get', 'category'], fam],
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 2.5, 17, 5, 19, 8],
+      'circle-color': color, 'circle-opacity': 0.85,
+      'circle-stroke-width': 1, 'circle-stroke-color': '#fffdf9'
+    }
+  });
+  ml.on('mouseenter', 'poi-' + fam, () => { ml.getCanvas().style.cursor = 'pointer'; });
+  ml.on('mouseleave', 'poi-' + fam, () => { ml.getCanvas().style.cursor = ''; });
+});
+
+// 3) fetch the POIs for the current view, then update the source
+async function loadPois() {
+  const b = ml.getBounds();
+  const url = `${API}/pois?west=${b.getWest()}&south=${b.getSouth()}`
+            + `&east=${b.getEast()}&north=${b.getNorth()}`;
+  try {
+    const res = await fetch(url);
+    ml.getSource('pois').setData(await res.json());
+  } catch (e) {
+    console.error('POI load failed', e);
+  }
+}
+loadPois();                  // initial load
+ml.on('moveend', loadPois);  // reload on every pan/zoom
+
+// 4) popup au clic
+ml.on('click', (e) => {
+  const hits = ml.queryRenderedFeatures(e.point, { layers: FAMILIES.map(([f]) => 'poi-' + f) });
+  if (!hits.length) return;
+  const p = hits[0].properties;
+  new maplibregl.Popup({ offset: 10 }).setLngLat(e.lngLat)
+    .setHTML('<b>' + p.name + '</b><br>' + p.category + ' · ' + p.subcategory).addTo(ml);
+});
+
+
   });
 
   // toggle heatmap
@@ -221,133 +253,6 @@
       ml.setLayoutProperty('discovery-heat', 'visibility', on ? 'visible' : 'none');
   };
 
-  /* ---------------- KAKAO (si clé fournie) ---------------- */
-  function initKakao(){
-    kakao.maps.load(() => {
-      document.getElementById('kakao-ph').style.display = 'none';
-      document.getElementById('kakao-btns').style.display = 'flex';
-      const container = document.getElementById('kakaomap');
-      kakaoMap = new kakao.maps.Map(container, {
-        center: new kakao.maps.LatLng(CENTER.lat, CENTER.lng),
-        level: 3
-      });
-      kakaoMap.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
-
-      // "vous êtes ici"
-      new kakao.maps.Marker({ map: kakaoMap, position: new kakao.maps.LatLng(CENTER.lat, CENTER.lng) });
-
-      // Kakao prêt → on cherche les cafés et on les pose sur les DEUX cartes
-      searchCafes();
-
-      // chemin piéton (même tracé que sur MapLibre)
-      new kakao.maps.Polyline({ map: kakaoMap,
-        path: WALK.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng)),
-        strokeWeight: 5, strokeColor: '#e0603a', strokeOpacity: 0.95, strokeStyle: 'solid' });
-
-      // heatmap fictive dessinée dans un canvas par-dessus (Kakao n'a pas de couche native)
-      setupKakaoHeatmap();
-
-      document.getElementById('k-roadmap').onclick = () => {
-        kakaoMap.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
-        document.getElementById('k-roadmap').classList.add('on');
-        document.getElementById('k-hybrid').classList.remove('on');
-      };
-      document.getElementById('k-hybrid').onclick = () => {
-        kakaoMap.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
-        document.getElementById('k-hybrid').classList.add('on');
-        document.getElementById('k-roadmap').classList.remove('on');
-      };
-    });
-  }
-
-  /* ---------------- Recherche de CAFÉS (Kakao Local via le SDK) ----------------
-     CE7 = code de catégorie "café". Le SDK renvoie x=lng, y=lat + place_name.
-     On efface la couche précédente, puis on pose les MÊMES points sur les deux cartes. */
-  const COFFEE = '#6f4e37';
-  function clearCafes() {
-    cafeLayer.kakao.forEach(o => o.setMap(null));
-    cafeLayer.ml.forEach(m => m.remove());
-    cafeLayer.kakao = []; cafeLayer.ml = [];
-  }
-  function setStatus(txt) { const el = document.getElementById('cafe-status'); if (el) el.textContent = txt; }
-
-  function searchCafes() {
-    if (!kakaoMap || !kakao.maps.services) { setStatus('Kakao pas encore prêt…'); return; }
-    setStatus('Recherche des cafés…');
-    clearCafes();
-    const places = new kakao.maps.services.Places();
-    const center = new kakao.maps.LatLng(CENTER.lat, CENTER.lng);
-    places.categorySearch('CE7', (data, status) => {
-      if (status !== kakao.maps.services.Status.OK) { setStatus('Aucun café trouvé (' + status + ')'); return; }
-      data.forEach(p => {
-        const lat = parseFloat(p.y), lng = parseFloat(p.x);
-
-        // sur Kakao : CustomOverlay stylée (illustre la personnalisation des overlays)
-        const el = document.createElement('div');
-        el.textContent = p.place_name;
-        el.style.cssText = 'background:' + COFFEE + ';color:#fff;font:600 11px/1 system-ui,sans-serif;'
-          + 'padding:4px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3)';
-        cafeLayer.kakao.push(new kakao.maps.CustomOverlay({
-          map: kakaoMap, position: new kakao.maps.LatLng(lat, lng), content: el, xAnchor: 0.5, yAnchor: 1.3 }));
-
-        // sur MapLibre : le MÊME point, marqueur couleur café + popup
-        cafeLayer.ml.push(new maplibregl.Marker({ color: COFFEE })
-          .setLngLat([lng, lat])
-          .setPopup(new maplibregl.Popup({ offset: 18 }).setText(p.place_name))
-          .addTo(ml));
-      });
-      setStatus(data.length + ' cafés (données Kakao) affichés à l’identique sur les deux cartes');
-    }, { location: center, radius: 500, sort: kakao.maps.services.SortBy.DISTANCE });
-  }
-
-  const cafeBtn = document.getElementById('cafe-btn');
-  if (cafeBtn) cafeBtn.onclick = searchCafes;
-
-  /* ---- Heatmap fictive sur Kakao : un <canvas> posé sur la carte ----
-     Kakao n'a pas de couche heatmap ; on projette les points en pixels
-     (approximation linéaire via les bornes de la carte) et on peint des halos. */
-  function setupKakaoHeatmap() {
-    const host = document.getElementById('kakaomap');
-    const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:3';
-    host.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
-    const pts = makeDiscoveryPoints().features;
-    function draw() {
-      const w = host.clientWidth, h = host.clientHeight;
-      canvas.width = w; canvas.height = h;
-      const b = kakaoMap.getBounds(), sw = b.getSouthWest(), ne = b.getNorthEast();
-      const lngSpan = ne.getLng() - sw.getLng(), latSpan = ne.getLat() - sw.getLat();
-      ctx.clearRect(0, 0, w, h);
-      ctx.globalCompositeOperation = 'lighter';
-      pts.forEach(f => {
-        const [lng, lat] = f.geometry.coordinates;
-        const x = (lng - sw.getLng()) / lngSpan * w;
-        const y = (ne.getLat() - lat) / latSpan * h;
-        const r = 80 * (0.6 + f.properties.w);
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-        grad.addColorStop(0, 'rgba(224,96,58,' + (0.12 + 0.35 * f.properties.w) + ')');
-        grad.addColorStop(1, 'rgba(224,96,58,0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      });
-      ctx.globalCompositeOperation = 'source-over';
-    }
-    draw();
-    kakao.maps.event.addListener(kakaoMap, 'idle', draw);
-    window.addEventListener('resize', draw);
-  }
-
-  if (KAKAO_JS_KEY) {
-    const s = document.createElement('script');
-    s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?autoload=false&libraries=services&appkey=' + KAKAO_JS_KEY;
-    s.onload = initKakao;
-    s.onerror = () => { document.getElementById('kakao-ph').innerHTML =
-      '<h3>❌ Domaine non autorisé</h3><p>Enregistre <code>http://127.0.0.1:8731</code> dans Kakao ' +
-      '(Plateforme → Web → domaine du site) <b>et</b> ouvre cette page via ' +
-      '<code>http://127.0.0.1:8731/…</code> (pas <code>localhost</code>).</p>'; };
-    document.head.appendChild(s);
-  }
 </script>
 </body>
 </html>

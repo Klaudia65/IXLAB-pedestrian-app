@@ -4,8 +4,8 @@
     {
       "name": "prototype",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8731", "--bind", "127.0.0.1"],
-      "port": 8731
+      "runtimeArgs": ["-m", "http.server", "8752", "--bind", "127.0.0.1", "--directory", "web/frontend"],
+      "port": 8752
     }
   ]
 }

@@ -59,29 +59,22 @@
 </div>
 
 <div class="grid">
-  <!-- ============ KAKAO ============ -->
-  <div class="panel">
-    <div class="bar"><b>🅰️ Kakao Map</b><span class="tag">données Corée</span></div>
-    <div class="map" id="kakaomap">
-      <div class="placeholder" id="kakao-ph">
-        <h3>🔑 Colle ta clé JavaScript Kakao</h3>
-        <p>Ouvre ce fichier et remplace <code>KAKAO_JS_KEY = ''</code> par ta clé JS,
-           puis enregistre <code>http://localhost:8731</code> dans la console Kakao
-           (Plateforme → Web → domaine du site). Recharge : la vraie carte Kakao apparaît ici.</p>
-      </div>
-    </div>
-    <div class="btnrow" id="kakao-btns" style="display:none">
-      <button id="k-roadmap" class="on">Plan</button>
-      <button id="k-hybrid">Satellite</button>
-    </div>
-  </div>
-
+  
   <!-- ============ MAPLIBRE ============ -->
   <div class="panel">
     <div class="bar"><b>🅱️ MapLibre GL</b><span class="tag">open source · stylable</span></div>
     <div class="map" id="mlmap"></div>
     <div class="btnrow">
       <button id="m-heat" class="on">Heatmap découverte</button>
+      <button id="m-osm" class="on">Chemins OSM</button>
+      <button id="m-seoul" class="on">Réseau piéton Séoul (ville)</button>
+    </div>
+    <div class="btnrow" id="seoul-legend" style="gap:12px;font-size:11px;color:var(--ink-soft)">
+      <span><span style="display:inline-block;width:14px;height:3px;background:#2b6cb0;vertical-align:middle"></span> passage piéton</span>
+      <span><span style="display:inline-block;width:14px;height:3px;background:#5e7c62;vertical-align:middle"></span> parc</span>
+      <span><span style="display:inline-block;width:14px;height:3px;background:#b0894a;vertical-align:middle"></span> pont</span>
+      <span><span style="display:inline-block;width:14px;height:3px;background:#9c6b8e;vertical-align:middle"></span> tunnel</span>
+      <span><span style="display:inline-block;width:14px;height:3px;background:#7a8699;vertical-align:middle"></span> voie ordinaire</span>
     </div>
   </div>
 </div>
@@ -97,9 +90,6 @@
 </div>
 
 <script>
-  // ⬇️⬇️⬇️  COLLE TA CLÉ JAVASCRIPT KAKAO ICI (entre les quotes)  ⬇️⬇️⬇️
-  const KAKAO_JS_KEY = '7713dfb272dc80af5410a8d4db85bf56';
-  // ⬆️⬆️⬆️ ------------------------------------------------------ ⬆️⬆️⬆️
 
   // Centre : cœur du village hanok d'Ikseon-dong
   const CENTER = { lat: 37.5737, lng: 126.9906 };
@@ -205,149 +195,158 @@
     }, 'place'); // insérée sous les libellés de lieux
 
     // chemin piéton (même tracé que sur Kakao)
+    /*
     ml.addSource('walk', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: WALK } } });
     ml.addLayer({
       id: 'walk-line', type: 'line', source: 'walk',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': PAL.accent, 'line-width': 4, 'line-dasharray': [1.6, 1.2], 'line-opacity': 0.95 }
     }, 'place');
+*/
+    // ---- Real OSM pedestrian paths, served from our own backend export ----
+    // OSM tags every way with a `highway` value. The pedestrian ones are:
+    //   footway (sidewalks/crossings), pedestrian (car-free streets),
+    //   path (trails), steps (stairs), living_street (shared low-speed streets).
+    const PATH_STYLE = [
+      ['pedestrian',    '#5e7c62'],  // green  — car-free streets/plazas
+      ['footway',       '#e0603a'],  // orange — sidewalks & crossings
+      ['path',          '#6b7fa3'],  // blue   — trails
+      ['steps',         '#b0894a'],  // brown  — stairs
+      ['living_street', '#9c6b8e']   // mauve  — shared streets
+    ];
+
+    // Empty source at first; filled once paths.geojson loads.
+    ml.addSource('osm-paths', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+    // One line layer, colored by the `highway` tag of each way.
+    ml.addLayer({
+      id: 'osm-paths-line', type: 'line', source: 'osm-paths',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': ['match', ['get', 'highway'],
+          'pedestrian', '#5e7c62',
+          'footway', '#e0603a',
+          'path', '#6b7fa3',
+          'steps', '#b0894a',
+          'living_street', '#9c6b8e',
+          '#9c6b8e'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 14, 1.2, 17, 3, 19, 6],
+        'line-opacity': 0.9
+      }
+    }, 'place'); // keep the place labels on top
+
+    // Load the pedestrian paths from OUR OWN data, not the live Overpass API.
+    // The paths were collected once into PostGIS (offline/scrapers/osm_paths_
+    // collector.py) and exported to this static file (offline/export_paths_
+    // geojson.py). Being same-origin, it can't trigger CORS or rate limits.
+    // To switch to the live backend later, point PATHS_URL at the FastAPI route:
+    //   `http://localhost:8000/paths?west=..&south=..&east=..&north=..`
+    const PATHS_URL = 'paths.geojson';
+    const statusEl = document.getElementById('cafe-status');
+    const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
+
+    async function loadPaths() {
+      setStatus('Chargement des chemins piétons…');
+      try {
+        const res = await fetch(PATHS_URL);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const geojson = await res.json();
+        ml.getSource('osm-paths').setData(geojson);
+        setStatus((geojson.features || []).length + ' chemins piétons chargés.');
+      } catch (err) {
+        console.error('Failed to load paths.geojson', err);
+        setStatus('⚠️ Impossible de charger paths.geojson — lance l\'export depuis le backend.');
+      }
+    }
+    loadPaths();  // load once; the static file already covers the pilot zone
+
+    // Popup on click: show the path type and its name (if any).
+    ml.on('click', 'osm-paths-line', (e) => {
+      const p = e.features[0].properties;
+      new maplibregl.Popup({ offset: 8 }).setLngLat(e.lngLat)
+        .setHTML('<b>' + (p.name || 'Chemin piéton') + '</b><br>' + p.highway).addTo(ml);
+    });
+    ml.on('mouseenter', 'osm-paths-line', () => { ml.getCanvas().style.cursor = 'pointer'; });
+    ml.on('mouseleave', 'osm-paths-line', () => { ml.getCanvas().style.cursor = ''; });
+
+    // ---- Seoul CITY pedestrian network, read LIVE from our DB via the API ----
+    // Unlike the OSM layer above (a static paths.geojson), this fetches from the
+    // FastAPI /walk-links endpoint for the CURRENT viewport — the "read from the
+    // database" approach. Each link is colored by its pedestrian attribute, so
+    // crosswalks, park paths, bridges and tunnels are immediately visible.
+    const API_BASE = 'http://localhost:8000';
+
+    ml.addSource('seoul-links', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    ml.addLayer({
+      id: 'seoul-links-line', type: 'line', source: 'seoul-links',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        // color by attribute priority: crosswalk > bridge > tunnel > park > plain
+        'line-color': ['case',
+          ['get', 'is_crosswalk'], '#2b6cb0',   // blue  — crosswalks
+          ['get', 'is_bridge'],    '#b0894a',   // brown — bridges
+          ['get', 'is_tunnel'],    '#9c6b8e',   // mauve — tunnels
+          ['get', 'in_park'],      '#5e7c62',   // green — park paths
+          '#7a8699'],                            // slate — ordinary walkway
+        'line-width': ['interpolate', ['linear'], ['zoom'], 14, 1, 17, 2.6, 19, 5],
+        'line-opacity': 0.9
+      }
+    }, 'place'); // keep place labels on top
+
+    // Fetch links for the current map view from the DB-backed API, then refresh
+    // whenever the user finishes panning/zooming (bbox-driven query).
+    async function loadSeoulLinks() {
+      const b = ml.getBounds();
+      const qs = `west=${b.getWest()}&south=${b.getSouth()}&east=${b.getEast()}&north=${b.getNorth()}`;
+      setStatus('Chargement du réseau piéton de Séoul…');
+      try {
+        const res = await fetch(`${API_BASE}/walk-links?${qs}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const geojson = await res.json();
+        ml.getSource('seoul-links').setData(geojson);
+        setStatus((geojson.features || []).length + ' tronçons Séoul (base de données).');
+      } catch (err) {
+        console.error('Failed to load /walk-links', err);
+        setStatus('⚠️ /walk-links inaccessible — le serveur API (port 8000) tourne-t-il ?');
+      }
+    }
+    loadSeoulLinks();
+    ml.on('moveend', loadSeoulLinks);
+
+    // Popup: neighborhood + which pedestrian attribute(s) apply + length.
+    ml.on('click', 'seoul-links-line', (e) => {
+      const p = e.features[0].properties;
+      const on = (v) => v === true || v === 'true';
+      const tags = [];
+      if (on(p.is_crosswalk)) tags.push('passage piéton');
+      if (on(p.is_bridge))    tags.push('pont');
+      if (on(p.is_tunnel))    tags.push('tunnel');
+      if (on(p.in_park))      tags.push('parc');
+      new maplibregl.Popup({ offset: 8 }).setLngLat(e.lngLat)
+        .setHTML('<b>Séoul · ' + (p.emd_nm || '') + '</b><br>' +
+                 (tags.length ? tags.join(', ') : 'voie piétonne') +
+                 '<br>' + Math.round(p.length_m || 0) + ' m').addTo(ml);
+    });
+    ml.on('mouseenter', 'seoul-links-line', () => { ml.getCanvas().style.cursor = 'pointer'; });
+    ml.on('mouseleave', 'seoul-links-line', () => { ml.getCanvas().style.cursor = ''; });
   });
 
-  // toggle heatmap
-  const mHeat = document.getElementById('m-heat');
-  if (mHeat) mHeat.onclick = () => {
-    const on = mHeat.classList.toggle('on');
-    if (ml.getLayer('discovery-heat'))
-      ml.setLayoutProperty('discovery-heat', 'visibility', on ? 'visible' : 'none');
-  };
-
-  /* ---------------- KAKAO (si clé fournie) ---------------- */
-  function initKakao(){
-    kakao.maps.load(() => {
-      document.getElementById('kakao-ph').style.display = 'none';
-      document.getElementById('kakao-btns').style.display = 'flex';
-      const container = document.getElementById('kakaomap');
-      kakaoMap = new kakao.maps.Map(container, {
-        center: new kakao.maps.LatLng(CENTER.lat, CENTER.lng),
-        level: 3
-      });
-      kakaoMap.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
-
-      // "vous êtes ici"
-      new kakao.maps.Marker({ map: kakaoMap, position: new kakao.maps.LatLng(CENTER.lat, CENTER.lng) });
-
-      // Kakao prêt → on cherche les cafés et on les pose sur les DEUX cartes
-      searchCafes();
-
-      // chemin piéton (même tracé que sur MapLibre)
-      new kakao.maps.Polyline({ map: kakaoMap,
-        path: WALK.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng)),
-        strokeWeight: 5, strokeColor: '#e0603a', strokeOpacity: 0.95, strokeStyle: 'solid' });
-
-      // heatmap fictive dessinée dans un canvas par-dessus (Kakao n'a pas de couche native)
-      setupKakaoHeatmap();
-
-      document.getElementById('k-roadmap').onclick = () => {
-        kakaoMap.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
-        document.getElementById('k-roadmap').classList.add('on');
-        document.getElementById('k-hybrid').classList.remove('on');
-      };
-      document.getElementById('k-hybrid').onclick = () => {
-        kakaoMap.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
-        document.getElementById('k-hybrid').classList.add('on');
-        document.getElementById('k-roadmap').classList.remove('on');
-      };
-    });
+  // small helper: wire a button to toggle a layer's visibility
+  function wireToggle(btnId, layerId) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.onclick = () => {
+      const on = btn.classList.toggle('on');
+      if (ml.getLayer(layerId))
+        ml.setLayoutProperty(layerId, 'visibility', on ? 'visible' : 'none');
+    };
   }
 
-  /* ---------------- Recherche de CAFÉS (Kakao Local via le SDK) ----------------
-     CE7 = code de catégorie "café". Le SDK renvoie x=lng, y=lat + place_name.
-     On efface la couche précédente, puis on pose les MÊMES points sur les deux cartes. */
-  const COFFEE = '#6f4e37';
-  function clearCafes() {
-    cafeLayer.kakao.forEach(o => o.setMap(null));
-    cafeLayer.ml.forEach(m => m.remove());
-    cafeLayer.kakao = []; cafeLayer.ml = [];
-  }
-  function setStatus(txt) { const el = document.getElementById('cafe-status'); if (el) el.textContent = txt; }
+  // toggle heatmap, OSM paths, and the Seoul city network independently
+  wireToggle('m-heat', 'discovery-heat');
+  wireToggle('m-osm', 'osm-paths-line');
+  wireToggle('m-seoul', 'seoul-links-line');
 
-  function searchCafes() {
-    if (!kakaoMap || !kakao.maps.services) { setStatus('Kakao pas encore prêt…'); return; }
-    setStatus('Recherche des cafés…');
-    clearCafes();
-    const places = new kakao.maps.services.Places();
-    const center = new kakao.maps.LatLng(CENTER.lat, CENTER.lng);
-    places.categorySearch('CE7', (data, status) => {
-      if (status !== kakao.maps.services.Status.OK) { setStatus('Aucun café trouvé (' + status + ')'); return; }
-      data.forEach(p => {
-        const lat = parseFloat(p.y), lng = parseFloat(p.x);
-
-        // sur Kakao : CustomOverlay stylée (illustre la personnalisation des overlays)
-        const el = document.createElement('div');
-        el.textContent = p.place_name;
-        el.style.cssText = 'background:' + COFFEE + ';color:#fff;font:600 11px/1 system-ui,sans-serif;'
-          + 'padding:4px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3)';
-        cafeLayer.kakao.push(new kakao.maps.CustomOverlay({
-          map: kakaoMap, position: new kakao.maps.LatLng(lat, lng), content: el, xAnchor: 0.5, yAnchor: 1.3 }));
-
-        // sur MapLibre : le MÊME point, marqueur couleur café + popup
-        cafeLayer.ml.push(new maplibregl.Marker({ color: COFFEE })
-          .setLngLat([lng, lat])
-          .setPopup(new maplibregl.Popup({ offset: 18 }).setText(p.place_name))
-          .addTo(ml));
-      });
-      setStatus(data.length + ' cafés (données Kakao) affichés à l’identique sur les deux cartes');
-    }, { location: center, radius: 500, sort: kakao.maps.services.SortBy.DISTANCE });
-  }
-
-  const cafeBtn = document.getElementById('cafe-btn');
-  if (cafeBtn) cafeBtn.onclick = searchCafes;
-
-  /* ---- Heatmap fictive sur Kakao : un <canvas> posé sur la carte ----
-     Kakao n'a pas de couche heatmap ; on projette les points en pixels
-     (approximation linéaire via les bornes de la carte) et on peint des halos. */
-  function setupKakaoHeatmap() {
-    const host = document.getElementById('kakaomap');
-    const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:3';
-    host.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
-    const pts = makeDiscoveryPoints().features;
-    function draw() {
-      const w = host.clientWidth, h = host.clientHeight;
-      canvas.width = w; canvas.height = h;
-      const b = kakaoMap.getBounds(), sw = b.getSouthWest(), ne = b.getNorthEast();
-      const lngSpan = ne.getLng() - sw.getLng(), latSpan = ne.getLat() - sw.getLat();
-      ctx.clearRect(0, 0, w, h);
-      ctx.globalCompositeOperation = 'lighter';
-      pts.forEach(f => {
-        const [lng, lat] = f.geometry.coordinates;
-        const x = (lng - sw.getLng()) / lngSpan * w;
-        const y = (ne.getLat() - lat) / latSpan * h;
-        const r = 80 * (0.6 + f.properties.w);
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-        grad.addColorStop(0, 'rgba(224,96,58,' + (0.12 + 0.35 * f.properties.w) + ')');
-        grad.addColorStop(1, 'rgba(224,96,58,0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      });
-      ctx.globalCompositeOperation = 'source-over';
-    }
-    draw();
-    kakao.maps.event.addListener(kakaoMap, 'idle', draw);
-    window.addEventListener('resize', draw);
-  }
-
-  if (KAKAO_JS_KEY) {
-    const s = document.createElement('script');
-    s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?autoload=false&libraries=services&appkey=' + KAKAO_JS_KEY;
-    s.onload = initKakao;
-    s.onerror = () => { document.getElementById('kakao-ph').innerHTML =
-      '<h3>❌ Domaine non autorisé</h3><p>Enregistre <code>http://127.0.0.1:8731</code> dans Kakao ' +
-      '(Plateforme → Web → domaine du site) <b>et</b> ouvre cette page via ' +
-      '<code>http://127.0.0.1:8731/…</code> (pas <code>localhost</code>).</p>'; };
-    document.head.appendChild(s);
-  }
 </script>
 </body>
 </html>
