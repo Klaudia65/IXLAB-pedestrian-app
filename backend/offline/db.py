@@ -449,3 +449,121 @@ def update_commerce_signature(rows: list[dict]) -> int:
             cur.executemany(_UPDATE_COMMERCE_SIGNATURE, rows)
         conn.commit()
     return len(rows)
+
+
+def get_naver_credentials() -> tuple[str, str]:
+    """Read (NAVER_CLIENT_ID, NAVER_CLIENT_SECRET) from backend/.env.
+
+    Naver's Search API (blog/local) issues these as an application id/secret pair,
+    sent as X-Naver-Client-Id / X-Naver-Client-Secret headers. Used by the POI text
+    collector (offline/scrapers/poi_text_collector.py). Raises if either is missing,
+    so the pipeline fails loudly rather than silently harvesting nothing.
+    """
+    env_path = pathlib.Path(__file__).resolve().parents[1] / ".env"
+    text = env_path.read_text(encoding="utf-8")
+    cid = re.search(r"NAVER_CLIENT_ID=(\S+)", text)
+    csec = re.search(r"NAVER_CLIENT_SECRET=(\S+)", text)
+    if not cid or not csec:
+        raise RuntimeError("NAVER_CLIENT_ID / NAVER_CLIENT_SECRET not found in backend/.env")
+    return cid.group(1), csec.group(1)
+
+
+# Insert a per-STREET axis score, or update it if we already have that
+# (zone_slug, name, dimension). No geometry here -- the score is keyed by street
+# NAME and later fanned onto osm_network edges of the same name; the geometry lives
+# in osm_network / street_characters. evidence / text_sources are passed as Python
+# lists (psycopg adapts a list to a text[]).
+_UPSERT_STREET_AXIS_SCORE = """
+INSERT INTO street_axis_scores (
+    name, dimension, score, pos_hits, neg_hits, evidence, text_len,
+    confidence, text_sources, zone_slug, method, source
+)
+VALUES (
+    %(name)s, %(dimension)s, %(score)s, %(pos_hits)s, %(neg_hits)s,
+    %(evidence)s, %(text_len)s, %(confidence)s, %(text_sources)s,
+    %(zone_slug)s, %(method)s, %(source)s
+)
+ON CONFLICT (zone_slug, name, dimension) DO UPDATE SET
+    score        = EXCLUDED.score,
+    pos_hits     = EXCLUDED.pos_hits,
+    neg_hits     = EXCLUDED.neg_hits,
+    evidence     = EXCLUDED.evidence,
+    text_len     = EXCLUDED.text_len,
+    confidence   = EXCLUDED.confidence,
+    text_sources = EXCLUDED.text_sources,
+    method       = EXCLUDED.method,
+    source       = EXCLUDED.source,
+    computed_at  = NOW();
+"""
+
+
+def upsert_street_axis_scores(rows: list[dict]) -> int:
+    """Insert/update a batch of per-street axis-score dicts. Returns how many were sent.
+
+    Each row must have: name, dimension, score (or None), pos_hits, neg_hits,
+    evidence (list[str]), text_len, confidence, text_sources (list[str]), zone_slug,
+    method, source.
+    """
+    if not rows:
+        return 0
+    with psycopg.connect(get_dsn(), connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.executemany(_UPSERT_STREET_AXIS_SCORE, rows)
+        conn.commit()
+    return len(rows)
+
+
+def fetch_street_texts(zone_slug: str) -> list[dict]:
+    """Read the descriptive text gathered per street (by the street_character pass).
+
+    Returns one dict per distinct street name that has usable text:
+        {name, text, text_sources}
+    Streets share a description across all ways of the same name, so we collapse to
+    one row per name (MAX picks the single populated description).
+    """
+    query = """
+        SELECT name,
+               MAX(description) AS text,
+               COALESCE(MAX(array_to_string(text_sources, ',')), '') AS sources
+        FROM street_characters
+        WHERE zone_slug = %s AND description IS NOT NULL AND length(description) > 30
+        GROUP BY name
+        ORDER BY name
+    """
+    with psycopg.connect(get_dsn(), connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (zone_slug,))
+            return [
+                {"name": r[0], "text": r[1],
+                 "text_sources": [s for s in (r[2] or "").split(",") if s]}
+                for r in cur.fetchall()
+            ]
+
+
+def fetch_edges_with_street_score(dimension: str, zone_slug: str) -> list[dict]:
+    """For every osm_network edge in the zone, attach the axis score of the street
+    that shares its name (if any). Returns rows shaped for scores.normalize_and_store:
+        {edge_id, agg_value, source_count}
+    Unnamed edges, and named edges whose street has no score, come back agg_value=None
+    / source_count=0 -> written is_observed=False (coverage-bias garde-fou kept honest).
+    """
+    query = """
+        SELECT e.edge_id,
+               sas.score AS agg_value,
+               CASE WHEN sas.score IS NOT NULL THEN 1 ELSE 0 END AS source_count
+        FROM osm_network e
+        LEFT JOIN street_axis_scores sas
+               ON sas.name = e.name
+              AND sas.dimension = %(dimension)s
+              AND sas.zone_slug = e.zone_slug
+        WHERE e.zone_slug = %(zone_slug)s
+    """
+    with psycopg.connect(get_dsn(), connect_timeout=10) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, {"dimension": dimension, "zone_slug": zone_slug})
+            cols = [c.name for c in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    for r in rows:  # AVG/score comes back as float already, but be safe vs Decimal
+        if r["agg_value"] is not None:
+            r["agg_value"] = float(r["agg_value"])
+    return rows

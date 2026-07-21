@@ -38,7 +38,7 @@ function App() {
     landing: <LandingScreen go={go} />,
     swipe: <SwipeScreen go={go} />,
     sliders: <SlidersScreen go={go} />,
-    map2: <MapScreen2 />,
+    map2: <RealMapScreen />,
     social: <SocialScreen go={go} />,
     group: <GroupScreen go={go} />,
   };

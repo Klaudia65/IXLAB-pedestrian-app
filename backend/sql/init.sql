@@ -247,6 +247,48 @@ CREATE TABLE IF NOT EXISTS segment_scores (
 CREATE INDEX IF NOT EXISTS idx_segment_scores_dimension ON segment_scores (dimension);
 CREATE INDEX IF NOT EXISTS idx_segment_scores_zone ON segment_scores (zone_slug);
 
+-- Per-STREET perceptual scores from the NLP pipeline (the "soft" dimensions of the
+-- cadrage that NO hard dataset can measure: Touristy/Local, Historic/Contemporary,
+-- Raw/Polished). These live in the language people use to DESCRIBE a place. The unit
+-- of analysis is the STREET, not the shop: we score text that describes the street
+-- (Wikipedia + blog prose already gathered per street name in street_characters),
+-- so a street is qualified by how it is talked about as a whole -- and the shops on
+-- it influence that score only insofar as the text mentions them (e.g. "카페가 많은
+-- 거리"). We deliberately do NOT score individual commerce POIs.
+--
+-- One row per (street name, dimension); the score is then fanned onto every
+-- osm_network edge sharing that name to fill segment_scores (name join, no buffer),
+-- so these become first-class bipolar dimensions alongside quiet_lively/local_chain.
+-- This table is the provenance/"why" layer (evidence words for the map popup).
+--
+-- score is oriented toward the SECOND pole of the dimension name (repo convention:
+-- quiet_LIVELY, local_CHAIN), i.e. +1 = local / contemporary / polished,
+-- -1 = touristy / historic / raw.
+CREATE TABLE IF NOT EXISTS street_axis_scores (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,               -- the street name = the unit of analysis
+    dimension VARCHAR(40) NOT NULL,           -- touristy_local | historic_contemporary | raw_polished
+    score FLOAT,                              -- [-1,1] toward the + pole; NULL if no pole word fired
+    pos_hits INTEGER DEFAULT 0,               -- # matched words on the + pole
+    neg_hits INTEGER DEFAULT 0,               -- # matched words on the - pole
+    evidence TEXT[] DEFAULT '{}',             -- the matched pole words (the "why")
+    text_len INTEGER DEFAULT 0,               -- length of the source text (evidence weight)
+    confidence FLOAT DEFAULT 0,               -- 0..1, grows with total pole-word hits + text length
+    text_sources TEXT[] DEFAULT '{}',         -- which sources the scored text came from (wikipedia/blog)
+
+    zone_slug VARCHAR(60),
+    method VARCHAR(40),                        -- 'lexicon' now; 'embedding' / 'llm' later
+    source VARCHAR(50) DEFAULT 'nlp',
+    computed_at TIMESTAMPTZ DEFAULT NOW(),
+
+    UNIQUE (zone_slug, name, dimension)
+);
+
+-- btree indexes for the common filters (join is by name -> osm_network.name)
+CREATE INDEX IF NOT EXISTS idx_street_axis_scores_dim ON street_axis_scores (dimension);
+CREATE INDEX IF NOT EXISTS idx_street_axis_scores_zone ON street_axis_scores (zone_slug);
+CREATE INDEX IF NOT EXISTS idx_street_axis_scores_name ON street_axis_scores (name);
+
 -- Street experiential character (the "vibe" of a street), Wave 1 = the Wiki* base.
 -- Per the street-character design: a street "has a character" when independent
 -- sources converge on the same descriptive words -- character lives in how people

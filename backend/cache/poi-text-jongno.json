@@ -1,0 +1,73 @@
+{
+  "_note": "PROTOTYPE FIXTURES for the NLP axis pipeline (offline/text_axes.py). These are SYNTHETIC test POIs -- made-up names, plausible Jongno coordinates, hand-written Korean descriptions chosen to span the poles of the 3 soft axes (touristy/local, historic/contemporary, raw/polished). They validate the machinery (score -> poi_axis_scores -> buffer aggregation -> segment_scores -> map), NOT the accuracy of the lexicon (the text and the lexicon were written together, so this is circular by construction). Real accuracy is only testable on text harvested from the Naver Blog Search API. Production replaces this file with offline/scrapers/poi_text_collector.py writing the same {poi_key: {name, lat, lng, text}} shape over real POIs.",
+  "fx_bukchon_hanok_teahouse": {
+    "name": "[fixture] 북촌 한옥 전통찻집",
+    "lat": 37.5826, "lng": 126.9850,
+    "text": "북촌 골목 안 오래된 한옥을 개조한 전통찻집. 고즈넉한 정취 속에서 동네 단골들이 조용히 차를 즐긴다. 세월이 묻어나는 소박한 공간이라 관광지 같지 않고 한적하다."
+  },
+  "fx_ikseon_modern_cafe": {
+    "name": "[fixture] 익선동 모던 스페셜티 카페",
+    "lat": 37.5745, "lng": 126.9910,
+    "text": "익선동 한옥거리의 힙한 스페셜티 카페. 감성 인테리어와 루프탑으로 인증샷 명소가 되어 관광객이 줄 서서 웨이팅한다. 세련되고 트렌디한 신상 핫플레이스."
+  },
+  "fx_tongin_market_nopo": {
+    "name": "[fixture] 통인시장 노포 분식",
+    "lat": 37.5806, "lng": 126.9700,
+    "text": "통인시장 안 오래된 재래시장 노포. 동네 주민과 단골이 찾는 허름하고 투박한 분식집, 서민적이고 정겨운 골목이다."
+  },
+  "fx_gyeongbokgung": {
+    "name": "[fixture] 경복궁 고궁",
+    "lat": 37.5796, "lng": 126.9770,
+    "text": "조선시대 궁궐로 서울의 대표 관광 명소. 외국인 관광객이 필수코스로 찾는 랜드마크. 전통과 역사가 살아있는 유서 깊은 고궁."
+  },
+  "fx_samcheong_boutique": {
+    "name": "[fixture] 삼청동 디자이너 편집숍",
+    "lat": 37.5840, "lng": 126.9820,
+    "text": "삼청동의 세련된 디자이너 편집숍. 감각적인 인테리어의 부티크로 트렌디한 신상이 가득하다. 데이트코스로 유명한 핫플."
+  },
+  "fx_seochon_baekban": {
+    "name": "[fixture] 서촌 동네 백반집",
+    "lat": 37.5790, "lng": 126.9705,
+    "text": "서촌 골목의 동네 백반집. 주민 단골이 찾는 허름하고 소박한 서민 식당, 정겨운 일상의 맛이다."
+  },
+  "fx_insadong_gallery": {
+    "name": "[fixture] 인사동 현대미술 갤러리",
+    "lat": 37.5730, "lng": 126.9855,
+    "text": "인사동의 현대미술 갤러리. 세련된 전시 공간에서 관광객과 미술 애호가가 어우러진다. 전통문화와 현대 예술이 만나는 명소."
+  },
+  "fx_jongno_franchise_cafe": {
+    "name": "[fixture] 종로 프랜차이즈 카페",
+    "lat": 37.5700, "lng": 126.9830,
+    "text": "종로 대로변의 깔끔한 프랜차이즈 카페. 모던하고 정돈된 인테리어, 어디서나 익숙한 트렌디한 공간."
+  },
+  "fx_pimatgol_pocha": {
+    "name": "[fixture] 피맛골 포장마차",
+    "lat": 37.5705, "lng": 126.9840,
+    "text": "피맛골 뒷골목의 오래된 포장마차. 서민들이 모이는 허름한 노포, 밤늦게까지 정겨운 골목 술집이다."
+  },
+  "fx_hotel_lounge": {
+    "name": "[fixture] 광화문 호텔 라운지",
+    "lat": 37.5710, "lng": 126.9790,
+    "text": "고급 호텔의 럭셔리 라운지. 우아하고 세련된 프리미엄 공간, 관광객에게 인기 있는 모던한 명소."
+  },
+  "fx_old_bookstore": {
+    "name": "[fixture] 인사동 고서점",
+    "lat": 37.5725, "lng": 126.9860,
+    "text": "인사동의 오래된 고서점. 세월이 쌓인 고서와 골동품이 가득한 유서 깊은 공간, 단골 애서가들이 찾는 조용한 곳."
+  },
+  "fx_dessert_cafe_instagram": {
+    "name": "[fixture] 인증샷 디저트 카페",
+    "lat": 37.5748, "lng": 126.9905,
+    "text": "인증샷 성지로 유명한 디저트 카페. 감각적인 인테리어와 트렌디한 메뉴로 관광객이 줄 서서 웨이팅하는 핫플레이스."
+  },
+  "fx_craft_workshop": {
+    "name": "[fixture] 돈화문로 전통 공예 공방",
+    "lat": 37.5760, "lng": 126.9915,
+    "text": "돈화문로의 전통 공예 공방. 장인이 지키는 한옥 작업실에서 전통문화를 잇는다. 동네에 조용히 자리한 유서 깊은 공간."
+  },
+  "fx_sewoon_electronics": {
+    "name": "[fixture] 세운상가 전자상가",
+    "lat": 37.5690, "lng": 126.9915,
+    "text": "세운상가의 오래된 전자상가. 낡고 투박한 골목 상가, 근대 산업의 세월이 묻은 서민적인 공간."
+  }
+}
