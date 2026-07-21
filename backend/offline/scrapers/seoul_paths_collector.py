@@ -45,8 +45,8 @@ FLAG_FIELDS = {
 # 2. FETCH — one page of the district-filtered dataset.
 # The Seoul REST pattern is /{KEY}/{TYPE}/{SERVICE}/{START}/{END}/{FILTER}.
 # ---------------------------------------------------------------------------
-def fetch_page(key: str, start: int, end: int) -> dict:
-    url = f"{BASE}/{key}/json/{SERVICE}/{start}/{end}/{DISTRICT}"
+def fetch_page(key: str, start: int, end: int, district: str = DISTRICT) -> dict:
+    url = f"{BASE}/{key}/json/{SERVICE}/{start}/{end}/{district}"
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     body = resp.json().get(SERVICE, {})

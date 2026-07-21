@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"/>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>body{margin:0}#map{width:100vw;height:100vh;background:#f0e9dd}</style></head>
+<body><div id="map"></div><script>
+// VERIFICATION ONLY: blank base (no external tiles) to prove the data layers render.
+const BBOX=[126.97869,37.56623,127.01052,37.58646];
+const map=new maplibregl.Map({container:'map',
+  style:{version:8,sources:{},layers:[{id:'bg',type:'background',paint:{'background-color':'#f0e9dd'}}]},
+  bounds:[[BBOX[0],BBOX[1]],[BBOX[2],BBOX[3]]],fitBoundsOptions:{padding:20}});
+map.on('load',()=>{
+  map.addSource('score',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'score-line',type:'line',source:'score',
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':['case',['get','is_observed'],
+      ['interpolate',['linear'],['get','agg_value'],0,'#1f6f9c',0.10,'#cfc6b8',0.25,'#e0a370',0.50,'#e0603a',1.0,'#a83a1e'],'#c9c0b2'],
+      'line-width':['case',['get','is_observed'],2.4,0.8],
+      'line-opacity':['case',['get','is_observed'],0.95,0.35]}});
+  map.addSource('com',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'chain',type:'circle',source:'com',filter:['get','is_chain'],
+    paint:{'circle-color':'#a83a1e','circle-radius':3,'circle-stroke-color':'#fff','circle-stroke-width':0.6}});
+  fetch('scores-local-chain-jongno.geojson').then(r=>r.json()).then(gj=>{map.getSource('score').setData(gj);
+    window.__ok=(gj.features||[]).length;});
+  fetch('commerces-jongno.geojson').then(r=>r.json()).then(gj=>{map.getSource('com').setData(gj);
+    window.__com=(gj.features||[]).length;});
+});
+</script></body></html>

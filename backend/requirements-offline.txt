@@ -1,7 +1,16 @@
 -r requirements.txt
 requests==2.32.3
 psycopg[binary]>=3.2
+scikit-learn>=1.4          # TF-IDF fingerprints for the street-character dimension
 transformers==4.40.0
 torch==2.3.0
 sentencepiece==0.2.0
 kobert-tokenizer==0.1.1
+
+# Geo stack for zones/build_zone.py (OSM graph) and the Seoul population
+# collector (SGIS boundary reprojection).
+geopandas==1.1.4
+osmnx==2.1.0
+networkx==3.6.1
+shapely==2.1.2
+pyproj==3.7.2

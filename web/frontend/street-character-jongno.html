@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Caractère des rues — texte libre + preuves commerçantes · Jongno-gu</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+<style>
+  :root{
+    --paper:#f4efe7; --ink:#221f1a; --ink-soft:#6b6357; --line:#e0d8cb;
+    --accent:#8a5a2b; --card:#fffdf9;
+    --font: -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);}
+  header{padding:18px 22px 10px;}
+  header .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);}
+  header h1{margin:4px 0 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;}
+  header p{margin:0;font-size:13px;color:var(--ink-soft);max-width:880px;line-height:1.5;}
+  .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 22px 12px;}
+  #status{font-size:12.5px;color:var(--ink-soft);}
+  .map{position:relative;height:74vh;min-height:460px;width:100%;background:#e9e3d8;}
+  .legends{display:flex;gap:26px;flex-wrap:wrap;padding:12px 22px 26px;}
+  .legend b{display:block;font-size:12px;margin-bottom:6px;}
+  .legend span.row{display:block;font-size:11.5px;color:var(--ink-soft);line-height:1.9;}
+  .swatch{display:inline-block;width:18px;height:5px;vertical-align:middle;margin-right:6px;border-radius:2px;}
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:10px;padding:10px 12px;max-width:260px;}
+  .maplibregl-popup-content .why{color:var(--accent);font-weight:700;}
+  .maplibregl-popup-content .commerce{color:#1f6f68;font-weight:700;}
+  .maplibregl-popup-content .desc{color:var(--ink-soft);line-height:1.45;margin-top:5px;display:block;}
+  .maplibregl-popup-content a{color:var(--accent);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kick">zone pilote - Jongno-gu · couche découverte (hors 6 dimensions)</div>
+  <h1>Caractère expérientiel des rues</h1>
+  <p>Deux lectures du caractère d'une rue. <b>Texte</b> (terracotta) : la <b>façon dont on la décrit</b> —
+  chaque nom confronté à <b>Wikipédia coréen</b>, vocabulaire distinctif extrait par TF-IDF (confiance ≥ 0,5).
+  <b>Preuves commerçantes</b> (sarcelle) : la <b>signature des boutiques qui la bordent</b> — on compte les
+  catégories de commerces dans un rayon de 25 m et on garde celles <i>sur-représentées</i> ici vs toute la zone
+  (TF-IDF sur catégories), d'où « galeries + cafés = rue arty », « 시계/귀금속 = rue des bijoutiers ». Cette
+  couche donne un caractère à <b>toute rue commerçante, même sans article</b> — d'où le bond de couverture.
+  Clique une rue pour voir sa signature.</p>
+</header>
+
+<div class="controls">
+  <span id="status">Chargement…</span>
+</div>
+
+<div class="map" id="map"></div>
+
+<div class="legends">
+  <div class="legend">
+    <b>Street type</b>
+    <span class="row"><span class="swatch" style="background:#b5561f;height:4px;"></span>solid line — <b>pedestrian</b> (footway / alley)</span>
+    <span class="row"><span class="swatch" style="background:#b5561f;height:4px;background-image:linear-gradient(90deg,#b5561f 60%,transparent 0);background-size:9px 4px;"></span>dashed — <b>walkable</b> (traffic alongside)</span>
+  </div>
+  <div class="legend">
+    <b>Colour = evidence source</b>
+    <span class="row"><span class="swatch" style="background:#d97a3d;"></span>terracotta — <b>text</b> (article); darker = more converging sources</span>
+    <span class="row"><span class="swatch" style="background:#2f7a7a;"></span>teal — <b>commerce signature</b>; darker = more shops</span>
+    <span class="row"><span class="swatch" style="background:#7a2f10;"></span>deep brown — <b>both</b> text & commerce agree</span>
+  </div>
+  <div class="legend">
+    <b>How to read & limits</b>
+    <span class="row">Commerce signature = <i>over-represented</i> shop categories (TF-IDF), not the most common ones.</span>
+    <span class="row">Shown only with ≥ 12 shops nearby, so the signature is trustworthy; food alleys with all-different subcategories read as generic.</span>
+    <span class="row">A major axis (을지로…) shows as a <b>dashed</b> line: a walkable fragment, not the whole avenue.</span>
+  </div>
+</div>
+
+<script>
+  // Zone bounding box: [W, S, E, N] — same box as the other Jongno maps.
+  const BBOX = [126.97869, 37.56623, 127.01052, 37.58646];
+
+  // ---- Base map: OpenFreeMap vector, repainted in the "hanok" palette --------
+  const PAL = { land:'#f0e9dd', water:'#c3d0cc', green:'#d2dcc3',
+    building:'#e7dbc7', buildingLine:'#d9ccb6', roadCase:'#e2d9ca', road:'#fffdf9',
+    inkSoft:'#6b6357' };
+  const baseStyle = {
+    version: 8,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: { omt: { type:'vector', url:'https://tiles.openfreemap.org/planet' } },
+    layers: [
+      { id:'bg', type:'background', paint:{ 'background-color':PAL.land } },
+      { id:'green', type:'fill', source:'omt', 'source-layer':'landcover',
+        filter:['in','class','wood','grass','scrub','park'],
+        paint:{ 'fill-color':PAL.green, 'fill-opacity':0.7 } },
+      { id:'park', type:'fill', source:'omt', 'source-layer':'park',
+        paint:{ 'fill-color':PAL.green, 'fill-opacity':0.55 } },
+      { id:'water', type:'fill', source:'omt', 'source-layer':'water',
+        paint:{ 'fill-color':PAL.water } },
+      { id:'building', type:'fill', source:'omt', 'source-layer':'building', minzoom:13,
+        paint:{ 'fill-color':PAL.building, 'fill-outline-color':PAL.buildingLine, 'fill-opacity':0.9 } },
+      { id:'road-case', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.roadCase, 'line-width':['interpolate',['linear'],['zoom'],12,1.5,16,10,18,22] } },
+      { id:'road', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.road, 'line-width':['interpolate',['linear'],['zoom'],12,0.6,16,7,18,16] } },
+      { id:'place', type:'symbol', source:'omt', 'source-layer':'place',
+        filter:['in','class','suburb','neighbourhood','quarter'],
+        layout:{ 'text-field':['get','name'], 'text-font':['Noto Sans Regular'],
+          'text-size':['interpolate',['linear'],['zoom'],13,10,17,15],
+          'text-transform':'uppercase','text-letter-spacing':0.12 },
+        paint:{ 'text-color':PAL.inkSoft, 'text-halo-color':PAL.land, 'text-halo-width':1.4 } }
+    ]
+  };
+
+  const map = new maplibregl.Map({
+    container:'map', style:baseStyle,
+    bounds:[[BBOX[0],BBOX[1]],[BBOX[2],BBOX[3]]], fitBoundsOptions:{ padding:24 },
+    attributionControl:{ compact:true }
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass:true }), 'top-right');
+
+  const statusEl = document.getElementById('status');
+  const setStatus = (m) => { statusEl.textContent = m; };
+
+  map.on('load', () => {
+    // ===== Characterful streets, colored/weighted by confidence =================
+    // Confidence 0.5 (single source) -> pale/thin; 0.85+ (converging sources)
+    // -> deep brown/thick. "Show few, show sure": the exporter already thresholds.
+    map.addSource('chr', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    // White casing UNDER the colored line, so even pale/low-confidence corridors
+    // stand out against the beige basemap.
+    map.addLayer({
+      id:'chr-casing', type:'line', source:'chr',
+      layout:{ 'line-cap':'round','line-join':'round' },
+      paint:{
+        'line-color':'#fffdf9',
+        'line-width':['interpolate',['linear'],['zoom'],13,5,16,10,19,17],
+        'line-opacity':0.85
+      }
+    }, 'place');
+    // Colour encodes WHICH evidence carries the street (property `evidence`):
+    //   text     -> terracotta, deepening with text confidence (converging sources)
+    //   commerce -> teal, deepening with the number of shops backing the signature
+    //   both     -> deep brown-red (text & commerce agree = strongest)
+    // Shared by both walkability layers below.
+    const TEXT_COLOR = ['interpolate',['linear'],['get','confidence'],
+      0.5, '#d97a3d', 0.7, '#b5561f', 0.9, '#7a2f10'];
+    const COMMERCE_COLOR = ['interpolate',['linear'],['get','commerce_count'],
+      12, '#7fb2a6', 40, '#2f7a7a', 90, '#134e4a'];
+    const EVIDENCE_COLOR = ['case',
+      ['==',['get','evidence'],'both'],     '#7a2f10',
+      ['==',['get','evidence'],'commerce'], COMMERCE_COLOR,
+      TEXT_COLOR];
+    const CONF_WIDTH = ['interpolate',['linear'],['zoom'],13,3,16,6,19,11];
+    // Pedestrian streets -> SOLID line.
+    map.addLayer({
+      id:'chr-line-pieton', type:'line', source:'chr',
+      filter:['==',['get','walkability'],'pieton'],
+      layout:{ 'line-cap':'round','line-join':'round' },
+      paint:{ 'line-color':EVIDENCE_COLOR, 'line-width':CONF_WIDTH, 'line-opacity':0.95 }
+    }, 'place');
+    // Walkable-with-traffic streets -> DASHED line (a road runs alongside).
+    map.addLayer({
+      id:'chr-line-marchable', type:'line', source:'chr',
+      filter:['==',['get','walkability'],'marchable'],
+      layout:{ 'line-cap':'butt','line-join':'round' },
+      paint:{ 'line-color':EVIDENCE_COLOR, 'line-width':CONF_WIDTH, 'line-opacity':0.95,
+        'line-dasharray':[2,1.6] }
+    }, 'place');
+
+    // Street-name labels along the corridors.
+    map.addLayer({
+      id:'chr-label', type:'symbol', source:'chr',
+      layout:{
+        'symbol-placement':'line', 'text-field':['get','name'],
+        'text-font':['Noto Sans Regular'],
+        'text-size':['interpolate',['linear'],['zoom'],14,10,18,15]
+      },
+      paint:{ 'text-color':'#5a3a18', 'text-halo-color':'#fffdf9', 'text-halo-width':1.6 }
+    });
+
+    // Cache-bust so a stale copy of the geojson can never mask an update.
+    fetch('street-character-jongno.geojson?v=' + Date.now()).then(r => r.json()).then(gj => {
+      map.getSource('chr').setData(gj);
+      const feats = gj.features||[];
+      const names = new Set(feats.map(f => f.properties.name));
+      const withCommerce = feats.filter(f => f.properties.commerce_why).length;
+      setStatus(`${feats.length} tronçons · ${names.size} rues · ${withCommerce} tronçons avec signature commerçante (par bloc, pas par rue entière)`);
+    }).catch(e => { console.error(e); setStatus('⚠️ street-character-jongno.geojson introuvable.'); });
+
+    // ---- Popup: name, walkability, the "why" (fingerprint), description, source ----
+    const CHR_LAYERS = ['chr-line-pieton','chr-line-marchable'];
+    const showPopup = (e) => {
+      const p = e.features[0].properties;
+      const kind = p.walkability === 'pieton' ? '🚶 piéton' : '🚶‍♂️🚗 marchable (rue à côté)';
+      const hasText = p.evidence === 'text' || p.evidence === 'both';
+      let html = `<b>${p.name}</b> · ${kind}`;
+
+      // Local-evidence (commerce) block: the shop-category signature + shop count.
+      if (p.commerce_why) {
+        html += `<div class="commerce">🏬 ${p.commerce_why}</div>` +
+                `<span class="desc">${p.commerce_count} businesses within 25 m</span>`;
+      }
+      // Text block: confidence, the fingerprint "why", article lede + wiki links.
+      if (hasText) {
+        const why = p.why ? `<div class="why">${p.why}</div>` : '';
+        const desc = p.description ? `<span class="desc">${String(p.description).slice(0,180)}…</span>` : '';
+        const wiki = p.wikidata
+          ? `<a href="https://www.wikidata.org/wiki/${p.wikidata}" target="_blank" rel="noopener">Wikidata</a> · `
+          : '';
+        html += `<br>📖 confiance ${Number(p.confidence).toFixed(2)}${why}${desc}` +
+                `<span class="desc">${wiki}<a href="https://ko.wikipedia.org/wiki/${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Wikipédia</a></span>`;
+      }
+      new maplibregl.Popup({ offset:8 }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+    };
+    CHR_LAYERS.forEach(id => {
+      map.on('click', id, showPopup);
+      map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+    });
+  });
+</script>
+</body>
+</html>

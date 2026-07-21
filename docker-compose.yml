@@ -8,7 +8,10 @@ services:
       POSTGRES_PASSWORD: ixlab6531
       POSTGRES_DB: explore
     ports:
-      - "5432:5432"                      # reachable from host tools (collector) at localhost:5432
+      - "5433:5432"                      # reachable from host tools (collector) at localhost:5433
+                                          # (5432 is left free: a native Postgres install on this
+                                          # machine also claims it, which caused host tools to connect
+                                          # to the wrong server)
     volumes:
       - pgdata:/var/lib/postgresql/data  # data survives container restarts
       - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  # runs on first init

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Local ↔ Chaîne — 상가정보 · Bukchon-Anguk-Insadong</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+<style>
+  :root{
+    --paper:#f4efe7; --ink:#221f1a; --ink-soft:#6b6357; --line:#e0d8cb;
+    --accent:#e0603a; --card:#fffdf9;
+    --font: -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);}
+  header{padding:18px 22px 10px;}
+  header .kick{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);}
+  header h1{margin:4px 0 2px;font-size:22px;font-weight:800;letter-spacing:-.01em;}
+  header p{margin:0;font-size:13px;color:var(--ink-soft);max-width:860px;line-height:1.5;}
+  .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 22px 12px;}
+  .controls button{font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--line);
+        background:var(--paper);color:var(--ink);border-radius:999px;padding:7px 13px;}
+  .controls button.on{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+  #status{font-size:12.5px;color:var(--ink-soft);}
+  .map{position:relative;height:74vh;min-height:460px;width:100%;background:#e9e3d8;}
+  .legends{display:flex;gap:26px;flex-wrap:wrap;padding:12px 22px 26px;}
+  .legend b{display:block;font-size:12px;margin-bottom:6px;}
+  .legend span.row{display:block;font-size:11.5px;color:var(--ink-soft);line-height:1.9;}
+  .swatch{display:inline-block;width:18px;height:4px;vertical-align:middle;margin-right:6px;border-radius:2px;}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:6px;}
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:10px;padding:8px 11px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kick">zone pilote - Jongno-gu · dimension 3/6</div>
+  <h1>Local / Indépendant ↔ Chaîne / Commercial</h1>
+  <p>Chaque tronçon est coloré par la <b>part de chaînes</b> parmi les commerces à moins de 25 m
+  (bleu = indépendant, rouge = chaîne). Source : recensement <b>소상공인시장진흥공단 상가정보</b> (data.go.kr,
+  trimestre 2026-Q1), restreint aux commerces de <b>détail (소매) + restauration (음식)</b>. Les chaînes
+  sont détectées par un dictionnaire de marques nationales (préfixe du nom) — précision privilégiée, rappel
+  partiel. Active les <b>points</b> pour voir les commerces qui portent le score.</p>
+</header>
+
+<div class="controls">
+  <button id="t-score" class="on">Score Local ↔ Chaîne</button>
+  <button id="t-chain">Points chaînes (415)</button>
+  <button id="t-indep">Points indépendants (9843)</button>
+  <span id="status">Chargement…</span>
+</div>
+
+<div class="map" id="map"></div>
+
+<div class="legends">
+  <div class="legend">
+    <b>Score par tronçon — part de chaînes (buffer 25 m)</b>
+    <div style="width:240px;height:10px;border-radius:5px;margin:4px 0 3px;
+                background:linear-gradient(to right,
+                  #1f6f9c 0%, #6fa8c4 12%, #cfc6b8 22%, #e0a370 40%, #e0603a 60%, #a83a1e 100%);"></div>
+    <div style="display:flex;justify-content:space-between;width:240px;font-size:11px;color:var(--ink-soft);margin-bottom:6px;">
+      <span>0 % (local)</span><span>50 %</span><span>100 % (chaîne)</span>
+    </div>
+    <span class="row"><span class="swatch" style="background:#c9c0b2;opacity:.35"></span>aucun commerce à moins de 25 m (3583 tronçons)</span>
+  </div>
+  <div class="legend">
+    <b>Commerces (points, masqués par défaut)</b>
+    <span class="row"><span class="dot" style="background:#a83a1e"></span>chaîne — marque nationale reconnue (415)</span>
+    <span class="row"><span class="dot" style="background:#5f8aa6;opacity:.5"></span>indépendant (9843)</span>
+    <span class="row" style="font-style:italic">détail + restauration uniquement ; bureaux/B2B exclus</span>
+  </div>
+</div>
+
+<script>
+  // Zone bounding box: [W, S, E, N].
+  const BBOX = [126.97869, 37.56623, 127.01052, 37.58646];
+
+  // ---- Base map: OpenFreeMap vector, repainted in the "hanok" palette --------
+  const PAL = { land:'#f0e9dd', water:'#c3d0cc', green:'#d2dcc3',
+    building:'#e7dbc7', buildingLine:'#d9ccb6', roadCase:'#e2d9ca', road:'#fffdf9',
+    inkSoft:'#6b6357' };
+  const baseStyle = {
+    version: 8,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: { omt: { type:'vector', url:'https://tiles.openfreemap.org/planet' } },
+    layers: [
+      { id:'bg', type:'background', paint:{ 'background-color':PAL.land } },
+      { id:'green', type:'fill', source:'omt', 'source-layer':'landcover',
+        filter:['in','class','wood','grass','scrub','park'],
+        paint:{ 'fill-color':PAL.green, 'fill-opacity':0.7 } },
+      { id:'park', type:'fill', source:'omt', 'source-layer':'park',
+        paint:{ 'fill-color':PAL.green, 'fill-opacity':0.55 } },
+      { id:'water', type:'fill', source:'omt', 'source-layer':'water',
+        paint:{ 'fill-color':PAL.water } },
+      { id:'building', type:'fill', source:'omt', 'source-layer':'building', minzoom:13,
+        paint:{ 'fill-color':PAL.building, 'fill-outline-color':PAL.buildingLine, 'fill-opacity':0.9 } },
+      { id:'road-case', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.roadCase, 'line-width':['interpolate',['linear'],['zoom'],12,1.5,16,10,18,22] } },
+      { id:'road', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.road, 'line-width':['interpolate',['linear'],['zoom'],12,0.6,16,7,18,16] } },
+      { id:'place', type:'symbol', source:'omt', 'source-layer':'place',
+        filter:['in','class','suburb','neighbourhood','quarter'],
+        layout:{ 'text-field':['get','name'], 'text-font':['Noto Sans Regular'],
+          'text-size':['interpolate',['linear'],['zoom'],13,10,17,15],
+          'text-transform':'uppercase','text-letter-spacing':0.12 },
+        paint:{ 'text-color':PAL.inkSoft, 'text-halo-color':PAL.land, 'text-halo-width':1.4 } }
+    ]
+  };
+
+  const map = new maplibregl.Map({
+    container:'map', style:baseStyle,
+    bounds:[[BBOX[0],BBOX[1]],[BBOX[2],BBOX[3]]], fitBoundsOptions:{ padding:24 },
+    attributionControl:{ compact:true }
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass:true }), 'top-right');
+
+  const statusEl = document.getElementById('status');
+  const setStatus = (m) => { statusEl.textContent = m; };
+
+  map.on('load', () => {
+    // ===== Per-segment score lines, colored by chain SHARE (agg_value 0..1) =====
+    // Coloring by share, not the z-score: "share of chains" is the interpretable
+    // quantity for this axis. Segments with no shop within 25m (is_observed=false)
+    // are drawn thin/muted so "no data" reads differently from "0% chains".
+    map.addSource('score', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    map.addLayer({
+      id:'score-line', type:'line', source:'score',
+      layout:{ 'line-cap':'round','line-join':'round' },
+      paint:{
+        'line-color':['case',
+          ['get','is_observed'],
+          ['interpolate',['linear'],['get','agg_value'],
+            0,    '#1f6f9c',   // 0% chains  -> blue  (local / independent)
+            0.10, '#cfc6b8',   // neutral tan
+            0.25, '#e0a370',
+            0.50, '#e0603a',   // half chains -> orange-red
+            1.0,  '#a83a1e'],  // all chains  -> deep red
+          '#c9c0b2'],          // no data
+        // One zoom-based interpolate per property (MapLibre rule): zoom outside,
+        // is_observed case nested at each stop.
+        'line-width':['interpolate',['linear'],['zoom'],
+          13,['case',['get','is_observed'],1.6,0.6],
+          16,['case',['get','is_observed'],3.4,1.2],
+          19,['case',['get','is_observed'],6.5,2]],
+        'line-opacity':['case',['get','is_observed'],0.9,0.35]
+      }
+    }, 'place');
+
+    // ===== Commerce points (evidence), hidden by default =======================
+    // Independents drawn first (faint, under), chains on top (bright red), so the
+    // 415 chains stay visible over the 9843 independents.
+    map.addSource('commerces', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    map.addLayer({
+      id:'indep-pts', type:'circle', source:'commerces',
+      filter:['!',['get','is_chain']],
+      layout:{ visibility:'none' },
+      paint:{
+        'circle-color':'#5f8aa6',
+        'circle-radius':['interpolate',['linear'],['zoom'],13,1.3,16,2.4,19,4],
+        'circle-opacity':0.45
+      }
+    });
+    map.addLayer({
+      id:'chain-pts', type:'circle', source:'commerces',
+      filter:['get','is_chain'],
+      layout:{ visibility:'none' },
+      paint:{
+        'circle-color':'#a83a1e',
+        'circle-radius':['interpolate',['linear'],['zoom'],13,2.2,16,3.6,19,6],
+        'circle-stroke-color':'#fffdf9', 'circle-stroke-width':0.8,
+        'circle-opacity':0.95
+      }
+    });
+
+    // ---- Load data ----
+    let nObs = 0, nChain = 0;
+    fetch('scores-local-chain-jongno.geojson').then(r => r.json()).then(gj => {
+      map.getSource('score').setData(gj);
+      nObs = (gj.features||[]).filter(f => f.properties.is_observed).length;
+      setStatus(`${(gj.features||[]).length} tronçons · ${nObs} avec commerce ≤25m · ${nChain} chaînes`);
+    }).catch(e => { console.error(e); setStatus('⚠️ scores-local-chain-jongno.geojson introuvable.'); });
+
+    fetch('commerces-jongno.geojson').then(r => r.json()).then(gj => {
+      map.getSource('commerces').setData(gj);
+      nChain = (gj.features||[]).filter(f => f.properties.is_chain).length;
+      setStatus(`${nObs} tronçons avec commerce ≤25m · ${(gj.features||[]).length} commerces (${nChain} chaînes)`);
+    }).catch(e => { console.error(e); });
+
+    // ---- Popups ----
+    map.on('click', 'score-line', (e) => {
+      const p = e.features[0].properties;
+      const on = (v) => v === true || v === 'true';
+      const body = on(p.is_observed)
+        ? `part de chaînes <b>${Math.round(Number(p.agg_value)*100)}%</b> · ${p.source_count} commerce(s) ≤25m · score ${Number(p.score).toFixed(2)} · confiance ${Number(p.confidence).toFixed(1)}`
+        : 'aucun commerce à moins de 25 m';
+      new maplibregl.Popup({ offset:8 }).setLngLat(e.lngLat)
+        .setHTML(`<b>Local ↔ Chaîne</b><br>${body}`).addTo(map);
+    });
+    const ptPopup = (e) => {
+      const p = e.features[0].properties;
+      const on = (v) => v === true || v === 'true';
+      const kind = on(p.is_chain) ? `chaîne (${p.chain_reason})` : 'indépendant';
+      new maplibregl.Popup({ offset:6 }).setLngLat(e.lngLat)
+        .setHTML(`<b>${p.name || '(sans nom)'}</b><br>${kind}<br>${p.scls || ''}`).addTo(map);
+    };
+    map.on('click', 'chain-pts', ptPopup);
+    map.on('click', 'indep-pts', ptPopup);
+    ['score-line','chain-pts','indep-pts'].forEach(id => {
+      map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+    });
+  });
+
+  // ---- Toggles ----
+  function wireToggle(btnId, layerIds) {
+    const btn = document.getElementById(btnId);
+    btn.onclick = () => {
+      const on = btn.classList.toggle('on');
+      layerIds.forEach(id => { if (map.getLayer(id)) map.setLayoutProperty(id,'visibility', on?'visible':'none'); });
+    };
+  }
+  wireToggle('t-score', ['score-line']);
+  wireToggle('t-chain', ['chain-pts']);
+  wireToggle('t-indep', ['indep-pts']);
+</script>
+</body>
+</html>
