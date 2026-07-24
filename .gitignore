@@ -20,3 +20,11 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 *.swp
+
+# Third-party text caches — ephemeral working data (raw blog/wiki snippets and the
+# cleaned generation inputs). Regenerable, must NOT be committed for rights reasons.
+# Only the transformative LLM summaries (cache/desc-llm-<zone>.json) are kept/tracked.
+backend/cache/blog-text-*.json
+backend/cache/desc-llm-*.input.json
+backend/cache/desc-llm-*.sentences.json
+backend/cache/wiki-summary-*.json

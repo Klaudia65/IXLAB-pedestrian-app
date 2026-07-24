@@ -24,6 +24,12 @@ Output: merges into cache/blog-text-{zone}.json ({street name: text}). Existing 
 entries are PRESERVED and appended to, not overwritten, so the hand-tuned prototype text
 survives while real blog text is added on top.
 
+RIGHTS / EPHEMERAL DATA: cache/blog-text-{zone}.json holds third-party snippet text and
+is treated as EPHEMERAL working data. It is git-ignored and must NEVER be committed. It
+exists only to feed the offline condensation batch (offline.street_description); once the
+transformative LLM summaries are written to cache/desc-llm-{zone}.json, delete the blog
+cache. Only the transformative summaries (and derived keyword fingerprints) are retained.
+
 Run:  python -m offline.scrapers.street_blog_collector                 (dry run: sample 5 streets, print, no write)
       python -m offline.scrapers.street_blog_collector --store          (all streets -> write cache)
       python -m offline.scrapers.street_blog_collector --store --limit 20   (first 20 streets only)

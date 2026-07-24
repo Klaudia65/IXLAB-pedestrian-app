@@ -288,9 +288,13 @@ def enrich(zone_slug: str = ZONE_SLUG, store: bool = False) -> None:
         name = w["name"]
         updates.append({
             "osm_id": w["osm_id"],
-            "description": text_by_name[name] or None,
-            "text_sources": sources_by_name[name],
-            "fingerprint": fingerprints[name],
+            # RIGHTS: never persist raw third-party text (blog/wiki snippets) into the
+            # DB. The harvested text is used in-memory only (for the fingerprint above);
+            # the human-readable description now comes from the TRANSFORMATIVE LLM
+            # summaries in cache/desc-llm-{zone}.json, assembled at export time.
+            "description": None,
+            "text_sources": sources_by_name[name],   # source labels only, not the text
+            "fingerprint": fingerprints[name],        # distinctive keywords (derived)
             "confidence": conf_by_name[name],
         })
 

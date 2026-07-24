@@ -1,0 +1,602 @@
+{
+  "계동2길": {
+    "source_hash": "cdde6db6921da9d60c1f0c6de206b8a061d18e3f",
+    "sentence": "북촌 계동 일대의 골목길로, 오래된 한옥과 현대적인 건물이 어우러진 사이로 카페와 작은 밥집이 이어져 걷기 좋다.",
+    "sentence_en": "An alley in the Gyedong area of Bukchon where old hanok and modern buildings sit side by side, lined with cafés and small eateries and pleasant to walk.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "계동6길": {
+    "source_hash": "93635d454d5348c317b591c687a5243c38d16be8",
+    "sentence": "북촌 안쪽 골목길로, 화가 배렴의 옛 가옥과 작은 독립서점, 오래된 맛집이 자리해 전통과 정취가 남아 있다.",
+    "sentence_en": "An inner Bukchon alley where painter Bae Ryeom's old house, a small independent bookshop and long-standing eateries keep a traditional, atmospheric feel.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "계동길": {
+    "source_hash": "60c87fd032cc7bf55a0b3b1a4adb97e7d841ff62",
+    "sentence": "북촌의 대표적인 옛 골목길로, 언덕 위 계동교회를 중심으로 오래된 집과 현대적 건물이 어우러지고 카페와 찻집, 밥집이 늘어서 있다.",
+    "sentence_en": "A signature old Bukchon lane centred on the hillside Gyedong Church, mixing old and modern houses and lined with cafés, tea houses and eateries.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "광통교 진출입 계단 3번": {
+    "source_hash": "d48f174914b6f1317b06377a15bb357b00df205f",
+    "sentence": "청계천으로 내려가는 계단으로, 조선시대 가장 큰 다리였던 광통교와 물길을 따라 걷는 산책로, 겨울 빛초롱축제로 이어진다.",
+    "sentence_en": "Steps down to the Cheonggyecheon, leading to Gwangtong Bridge (the largest bridge of the Joseon era), the waterside walking path and the winter lantern festival.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "낙산3길": {
+    "source_hash": "c308ce426ebb983de185626675a10eec51dfba74",
+    "sentence": "낙산공원과 한양도성 성곽길로 이어지는 언덕길로, 서울 도심이 내려다보이는 전망과 이화마을 벽화, 성곽 야경으로 이름난 산책 코스다.",
+    "sentence_en": "A hillside street connecting to Naksan Park and the Hanyang City Wall trail, known for city views, the Ihwa mural village and the wall lit up at night.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "낙산4길": {
+    "source_hash": "d58090fdc4e82fd6685cee9ff2563c0282a25806",
+    "sentence": "이화동 벽화마을과 낙산공원을 잇는 언덕길로, 하늘정원길과 한양도성 성곽길을 따라 걷기 좋고 서울 도심 전망이 트인다.",
+    "sentence_en": "A hillside street linking the Ihwa mural village to Naksan Park, pleasant to walk along the Sky Garden path and the city-wall trail with open views over central Seoul.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "낙산길": {
+    "source_hash": "0e679d2bc8c9e61ac14bb701b1d1f4a39ed72981",
+    "sentence": "낙산공원으로 오르는 언덕길로, 대학로·혜화와 이어지며 분위기 좋은 카페와 루프탑이 자리한 산책하기 좋은 길이다.",
+    "sentence_en": "A hillside street climbing to Naksan Park, connected to Daehangno and Hyehwa, with atmospheric cafés and rooftops and good for a stroll.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "낙산성곽길": {
+    "source_hash": "45bea9c17856217611483d26be5fd3faaea4933e",
+    "sentence": "흥인지문에서 낙산으로 오르는 한양도성 성곽길로, 서울 도심 야경과 이화벽화마을로 이름난 걷기 좋은 코스다.",
+    "sentence_en": "The Hanyang City Wall trail climbing from Heunginjimun up Naksan, a walkable route famed for the city night view and the Ihwa mural village.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "낙산성곽동길": {
+    "source_hash": "25a8338623dc6b82f3c236dfdcbf16add4dd0cf6",
+    "sentence": "한양도성 성벽 바깥을 따라 걷는 길로, 성벽의 웅장함과 창신동 절벽 풍경, 동대문 일대의 야경을 감상할 수 있다.",
+    "sentence_en": "A path along the outer side of the Hanyang city wall, taking in the wall's grandeur, the Changsin-dong cliff scenery and the Dongdaemun night view.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "낙산성곽서길": {
+    "source_hash": "f6f77d4dcbf4c433bd27cc97194f9bf65e27a7a2",
+    "sentence": "한양도성 성벽 안쪽을 따라 걷는 길로, 남산타워와 서울 도심이 한눈에 보이고 이화벽화마을과 세련된 카페가 이어진다.",
+    "sentence_en": "A path along the inner side of the Hanyang city wall, with Namsan Tower and central Seoul in full view and the Ihwa mural village and stylish cafés along the way.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "남대문로": {
+    "source_hash": "6f7949886d234d33884ad413d49a2b3e74089abe",
+    "sentence": "숭례문에서 종로로 이어지는 도심의 옛 상업 간선로로, 1910년대 절충식 한옥상가와 근대 은행 건물이 남아 상업지구의 역사를 간직하고 있다.",
+    "sentence_en": "An old commercial artery running from Sungnyemun to Jongno, where 1910s hybrid hanok shophouses and early-modern bank buildings preserve the district's mercantile history.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "다동길": {
+    "source_hash": "30d0dbea4d27e989ffa787dc0f6875eafb4ab990",
+    "sentence": "종각과 을지로 사이에 자리한 다동 먹자골목으로, 골목 안쪽에 곰탕·짬뽕집 같은 노포와 직장인 점심 맛집이 숨어 있다.",
+    "sentence_en": "A downtown food alley in Dadong between Jonggak and Euljiro, its lanes hiding old-established eateries and lunch spots favoured by office workers.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "대명1길": {
+    "source_hash": "dead12764212eba0719197d90e83b290c6cf9fdc",
+    "sentence": "광장시장 주단부에 자리한 길로, 혼주·전통 한복을 짓고 빌려주는 오래된 한복 상점들이 모여 시장의 정취가 짙다.",
+    "sentence_en": "A lane in Gwangjang Market's silk quarter, lined with long-standing shops that make and rent traditional and wedding hanbok, thick with old-market atmosphere.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "대명길": {
+    "source_hash": "668534a44c84c989bcaddc0c825f858d6f69233e",
+    "sentence": "광장시장 안 한복 상가 골목으로, 수십 년 경력의 전통 한복 맞춤·대여점이 이어져 재래시장 특유의 활기가 남아 있다.",
+    "sentence_en": "A hanbok-shop lane inside Gwangjang Market, lined with decades-old traditional hanbok tailors and rental shops that keep the bustle of an old market.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "대학로": {
+    "source_hash": "86d137aaf548c8c95e30052320e8810309fb6946",
+    "sentence": "소극장과 공연장이 밀집한 서울의 대표 공연문화 거리로, 마로니에공원을 중심으로 연극·뮤지컬을 즐기려는 젊은 활기가 넘친다.",
+    "sentence_en": "Seoul's foremost performing-arts street, dense with small and large theatres and centred on Marronnier Park, buzzing with a young crowd out for plays and musicals.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "대학로8가길": {
+    "source_hash": "e37ef8297fe630637fe7d1b8916499b9c855a7a9",
+    "sentence": "대학로 예술극장 맞은편의 골목으로, 소극장과 공연장이 늘어서 공연 전후로 사람들이 오가는 활기찬 길이다.",
+    "sentence_en": "An alley across from the Daehangno Arts Theater, lined with small theatres and performance halls and lively with audiences around show times.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "대학로9가길": {
+    "source_hash": "eb28f12405af25b99f453b15a3c0bfd3bc1e6ec8",
+    "sentence": "대학로 뒷골목에 숨은 조용한 길로, 한옥을 고친 감성 카페와 작은 공방이 자리해 번잡한 공연가와 다른 차분함이 있다.",
+    "sentence_en": "A quiet lane tucked behind Daehangno, with hanok-turned cafés and small studios offering a calm counterpoint to the busy theatre district.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로": {
+    "source_hash": "adecbabbe21ab7f2173ffb68e80e7bba981f1ca8",
+    "sentence": "창덕궁 돈화문으로 이어지는 옛 '왕의 길'로, '국악로'라 불릴 만큼 국악기 상점과 전통 한복점이 늘어서고 돈화문국악당의 한옥과 국악마당이 고즈넉한 정취를 자아낸다.",
+    "sentence_en": "The old 'royal road' to Changdeokgung's Donhwamun gate; known as 'Gugak-ro', it is lined with Korean-instrument shops and hanbok stores, the Donhwamun Gugakdang hanok and music yard lending a serene mood.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로11가길": {
+    "source_hash": "7814f12c826afb0d36147f844cc39c70c6d7ed02",
+    "sentence": "종로3가 뒷골목의 야장 삼겹살 골목으로, 인쇄소 노동자와 서민들이 찾던 노포들이 야외 테이블을 펼쳐 자리를 지켜 왔다.",
+    "sentence_en": "A back-alley of open-air pork-grill joints near Jongno 3-ga, where old eateries once favoured by print-shop workers and locals still set out their outdoor tables.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로11길": {
+    "source_hash": "2c2426ad7f030c2bf1545ca700f2259e65103e3d",
+    "sentence": "익선동 곁 종로3가의 야장 거리로, 길 양편의 고깃집·이자카야·주점이 야외 테이블을 내놓아 밤이면 활기가 넘치며, 보행 환경이 정비된 상생거리다.",
+    "sentence_en": "An open-air dining street by Ikseon-dong in Jongno 3-ga, its grill houses, izakaya and bars spilling tables onto the street for lively nights, recently re-paved as a pedestrian-friendly 'shared street'.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로11나길": {
+    "source_hash": "fced97fe30e621920d3f0cbeaf8c828ec49ab1a9",
+    "sentence": "익선동 한옥거리의 골목으로, 한옥을 개조한 카페와 다이닝, 야장 고깃집이 어우러진다.",
+    "sentence_en": "A lane in the Ikseon-dong hanok quarter, mixing hanok-converted cafés and dining rooms with open-air grill houses.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로11다길": {
+    "source_hash": "b9c1fab69476ff4bbefc7ed9ffbab3f449ceaf96",
+    "sentence": "익선동 골목 안쪽 길로, 한옥을 고친 카페와 빈티지한 공간, 오래된 칼국수 노포가 어우러진 아기자기한 길이다.",
+    "sentence_en": "An inner Ikseon-dong lane where hanok-turned cafés, vintage spaces and an old kalguksu eatery make for a charming, small-scale street.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로4길": {
+    "source_hash": "608469ddfa85559935cc5aa9d625f4f009d8bb90",
+    "sentence": "세운상가 옆 종로3가 뒷골목으로, 오래된 이발소와 염색집 같은 옛 가게가 남은 서민적인 길이다.",
+    "sentence_en": "A Jongno 3-ga backstreet beside Sewoon Sangga, where old barbershops and dye shops remain, keeping a plain, working-class feel.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로5가길": {
+    "source_hash": "15d6d590132fbcc76746a56bf83402ebdb195afc",
+    "sentence": "종로3가 피카디리 극장 곁 골목으로, 귀금속 상가와 85년 된 노포를 비롯한 오래된 삼겹살·해물 노포가 모여 있다.",
+    "sentence_en": "An alley beside the Piccadilly cinema in Jongno 3-ga, gathering a jewellery arcade and long-running eateries serving grilled pork and seafood, including an 85-year-old restaurant.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로6가길": {
+    "source_hash": "341faff7b2b50414caae2e5179937c14faa1b24c",
+    "sentence": "종로3가 귀금속 거리에 자리한 골목으로, 금은방과 주얼리 상점이 늘어서 있다.",
+    "sentence_en": "A lane on the Jongno 3-ga precious-metals street, lined with gold, silver and jewellery shops.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로6길": {
+    "source_hash": "35700202c76ba9b0ab3febc25749f192f0c21ddc",
+    "sentence": "종묘 돌담을 따라 이어지는 길로, 도성을 순찰하던 순라군에서 이름을 딴 내력과 옛 종로의 정취를 간직하고 있다.",
+    "sentence_en": "A street running along the Jongmyo stone wall, keeping the old feel of Jongno and a name derived from the 'sullagun' night patrols of the fortress city.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "돈화문로8길": {
+    "source_hash": "fa101475f14d0eaebb227a3539ba6be392f34bf0",
+    "sentence": "돈화문로 안쪽 골목으로, 시계와 귀금속을 손보는 오래된 수리 기술자의 가게들이 자리해 종로 노포 상권의 결을 보여 준다.",
+    "sentence_en": "An inner lane off Donhwamun-ro where old watch- and jewellery-repair craftsmen keep shop, showing the grain of Jongno's long-established trades.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "동순라길": {
+    "source_hash": "37587c2faea89691bffc051d477e2e0d4f8489d2",
+    "sentence": "창경궁과 종묘의 돌담을 따라 이어지는 고즈넉한 길로, 돌담 뷰 카페와 브런치 가게, 반지·주얼리 공방이 자리한다.",
+    "sentence_en": "A serene lane along the stone walls of Changgyeonggung and Jongmyo, with wall-view cafés, brunch spots and ring- and jewellery-making studios.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "동숭길": {
+    "source_hash": "a09fb007b243decc0eace5217f7d27517b628dda",
+    "sentence": "대학로와 이어지는 동숭길로, 소극장과 감성 카페가 자리해 공연을 즐기려는 발걸음이 이어진다.",
+    "sentence_en": "Dongsung-gil, connected to Daehangno, lined with small theatres and characterful cafés that draw a crowd out for performances.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "동호로": {
+    "source_hash": "9d6e22c767955c6041717928ad2607597da5308d",
+    "sentence": "청계천과 광장시장을 낀 종로5가의 길로, '약국 성지'로 불리는 약국 거리와 청계천 뷰 카페가 어우러진다.",
+    "sentence_en": "A Jongno 5-ga street between the Cheonggyecheon and Gwangjang Market, mixing its noted 'pharmacy mecca' with stream-view cafés.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "북촌로": {
+    "source_hash": "1234c133092ae7eeab69240b51b83ce9048c4012",
+    "sentence": "북촌한옥마을을 지나는 길로, 갤러리와 떡볶이·만두 노포, 개성 있는 카페가 한옥 사이에 어우러진다.",
+    "sentence_en": "The road through Bukchon Hanok Village, where galleries, old tteokbokki and dumpling eateries and characterful cafés sit among the hanok.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "북촌로11길": {
+    "source_hash": "87c6b31df08165bfe0ff1b40ceb7cee32b67ef8c",
+    "sentence": "북촌한옥마을에서 한옥이 가장 잘 보존된 길로, 언덕 위 전망대에서 기와지붕이 겹겹이 내려다보이고 갤러리와 한옥 카페가 어우러져 관광객이 즐겨 찾는다.",
+    "sentence_en": "The best-preserved hanok street in Bukchon, where a hilltop viewpoint looks over layers of tiled roofs and galleries and hanok cafés draw many visitors.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "북촌로5가길": {
+    "source_hash": "3051d036db65d2d9fd662ec40fa8d1e2378221d0",
+    "sentence": "삼청동과 북촌 사이의 한갓진 산책길로, 오래된 떡볶이집과 아기자기한 가게들이 자리해 붐비는 도심과 달리 여유롭다.",
+    "sentence_en": "A quiet strolling lane between Samcheong-dong and Bukchon, with an old tteokbokki shop and small stores, more relaxed than the crowded city centre.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "북촌로5길": {
+    "source_hash": "13a7078f6374b3b7e31124629b469eb23803e400",
+    "sentence": "북촌의 갤러리 거리 중 하나로, 현대미술 갤러리와 개성 있는 카페·상점이 한옥 사이에 자리한다.",
+    "sentence_en": "One of Bukchon's gallery streets, with contemporary-art galleries and distinctive cafés and shops set among the hanok.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "북촌로5나길": {
+    "source_hash": "da8448ff091e187a8c4f9e90e6823d1ef4687b38",
+    "sentence": "정독도서관과 북촌 전망대로 이어지는 삼청동의 산책길로, 국립현대미술관과 가깝고 걷기 좋은 조용한 길이다.",
+    "sentence_en": "A Samcheong-dong walking lane leading to Jeongdok Library and the Bukchon viewpoint, close to the National Museum of Modern and Contemporary Art and quietly pleasant to walk.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "북촌로7길": {
+    "source_hash": "0caae94c7b952125fcf84adb1fef079793645f52",
+    "sentence": "북촌한옥마을의 고택 백인제가옥이 자리한 길로, 한옥 고택을 둘러보려는 발걸음이 이어진다.",
+    "sentence_en": "The street of Baek In-je House, a grand old hanok in Bukchon, drawing visitors who come to tour the historic residence.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼일대로12길": {
+    "source_hash": "0afe24afcc1abb07d9ee7f634af21eb7049b3c93",
+    "sentence": "종로3가 골목으로, 서울에서 손꼽히는 평양냉면 노포와 참나무 장작으로 굽는 고깃집 등 오래된 맛집이 자리한다.",
+    "sentence_en": "A Jongno 3-ga alley home to one of Seoul's celebrated Pyongyang-naengmyeon institutions and an oak-fired grill house, among other long-standing eateries.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼일대로15길": {
+    "source_hash": "d8bdd14203f1624e0ff85369f25064c181a03acf",
+    "sentence": "종각 일대 골목으로, 재즈 클럽과 오래된 칼국수집이 자리해 밤이면 공연과 한잔을 즐기려는 이들이 찾는다.",
+    "sentence_en": "An alley near Jonggak with a jazz club and an old kalguksu house, drawing people out for live music and a drink after dark.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼일대로17길": {
+    "source_hash": "38d5661aca51d40c38db231e269704b6599097ec",
+    "sentence": "종각과 청계천 사이 골목으로, 7080 라이브바와 레트로 감성 다방, 해산물 주점이 어우러져 퇴근길 직장인들이 즐겨 찾는다.",
+    "sentence_en": "An alley between Jonggak and the Cheonggyecheon, mixing a retro '70s-'80s live-music bar, an old-style tearoom and seafood pubs favoured by office workers after work.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼일대로28길": {
+    "source_hash": "cf979d6b7c09b091dd51f99c372010f9f4eb67f9",
+    "sentence": "익선동의 한옥을 개조한 대형 디저트 카페와 베이커리가 모인 골목으로, 젊은 층이 즐겨 찾는 핫플이다.",
+    "sentence_en": "An Ikseon-dong lane of hanok-converted dessert cafés and bakeries, a hotspot popular with younger visitors.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼청로": {
+    "source_hash": "6659cbb62e7f54d9fef94a1f09409782d9b42b21",
+    "sentence": "경복궁과 북촌 사이의 예술적이고 보행 친화적인 거리로, 서울에서 미술관과 갤러리가 가장 많이 모여 있고 공방·디자이너숍과 전통 한옥이 어우러져 문화예술 산책을 즐기기 좋다.",
+    "sentence_en": "An artistic, pedestrian-friendly street between Gyeongbokgung and Bukchon, home to Seoul's densest cluster of museums and galleries, where craft studios, designer shops and traditional hanok make it ideal for an art-and-culture stroll.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼청로2길": {
+    "source_hash": "f5197a94d3a18652b6548bfa0f9f7c72612222c2",
+    "sentence": "삼청동의 조용한 골목길로, 한옥을 개조한 카페가 자리하고 선선한 저녁 가로등 아래 걷기만 해도 마음이 놓이는 길이다.",
+    "sentence_en": "A quiet Samcheong-dong lane with hanok-turned cafés, soothing to walk on a cool evening under the streetlamps.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼청로5길": {
+    "source_hash": "6645c579007fbd25d13fcc336cb2b3f6113ce69f",
+    "sentence": "정독도서관에서 박물관·미술관으로 이어지는 문화 산책로로, 감고당길과 열린송현 녹지광장을 낀 걷기 좋은 길이다.",
+    "sentence_en": "A cultural walking route from Jeongdok Library to nearby museums and galleries, taking in Gamgodang-gil and the Yeollin Songhyeon green plaza.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "삼청로7길": {
+    "source_hash": "e2b7a2e7cdd8db975861138ff6988431c2baecda",
+    "sentence": "청와대 앞길과 이어지는 삼청로의 한갓진 길로, 은행나무 단풍으로 이름난 가을 산책길이자 한옥 숙소와 갤러리가 자리한다.",
+    "sentence_en": "A quiet stretch of Samcheong-ro linked to the road past the former presidential compound, famed for its autumn ginkgo colours and dotted with hanok stays and galleries.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "서순라길": {
+    "source_hash": "4b83beaec06d8208af1f6584593e688fe1933c7e",
+    "sentence": "종묘 돌담을 따라 이어지는 길로, 100년 넘은 나무가 큰 그늘을 드리우고 감성 카페와 루프탑, 힙한 야장이 어우러져 조용하면서도 멋스러운 산책로다.",
+    "sentence_en": "A lane along the Jongmyo stone wall where century-old trees cast deep shade and mood cafés, rooftops and hip open-air eateries make for a quiet yet stylish walk.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "세운상가 공중보행데크": {
+    "source_hash": "368d06837bec074371176c3cf8b904bb3d2ec5de",
+    "sentence": "세운상가를 따라 종로에서 을지로까지 이어지는 공중 보행 데크로, 상가 3층 높이에서 종묘와 도심 풍경을 내려다보며 걷는 길이다.",
+    "sentence_en": "An elevated pedestrian deck running along the Sewoon arcades from Jongno to Euljiro, walked at third-floor height with views over Jongmyo and the city centre.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "수표로18길": {
+    "source_hash": "bf450801d01cdc0b6f2ea0b49f80406124ef02a9",
+    "sentence": "종로3가 관수동 골목으로, 1976년부터 자리를 지켜온 야장 삼겹살 노포를 비롯한 오래된 고깃집이 있다.",
+    "sentence_en": "A Gwansu-dong alley in Jongno 3-ga, home to old grill houses including an open-air pork-belly institution running since 1976.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "수표로20길": {
+    "source_hash": "531556a9fab2da2a07184bf46bfc6a3f861c3630",
+    "sentence": "종로3가 보쌈 골목의 길로, 오래도록 한자리를 지켜온 보쌈 노포들이 옛 식당의 정취를 낸다.",
+    "sentence_en": "A street in the Jongno 3-ga bossam alley, where long-standing bossam eateries keep the feel of an old-time diner.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "수표로28길": {
+    "source_hash": "83be5d34ef4a6e77b679b0305a4937d2998c5edb",
+    "sentence": "종로3가역 북쪽 익선동 곁의 뜨는 골목으로, 센스 있는 새 가게와 한옥 카페, 루프탑 이자카야가 하나둘 들어서고 있다.",
+    "sentence_en": "An up-and-coming alley by Ikseon-dong north of Jongno 3-ga Station, where stylish new shops, hanok cafés and a rooftop izakaya are steadily appearing.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "와룡공원길": {
+    "source_hash": "f93cdb59528acd5d7771402f563c4536d4ea7cf1",
+    "sentence": "북악산 기슭 와룡공원으로 오르는 무장애 산책길로, 한양도성과 이어지며 도심 속에서 여유로운 자연 산책을 즐길 수 있다.",
+    "sentence_en": "A barrier-free path climbing to Waryong Park on the slopes of Bukaksan, linked to the Hanyang City Wall and offering a relaxed nature walk within the city.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "우정국로": {
+    "source_hash": "878c516503f4270bba9576d1cea7d2bd3d85c052",
+    "sentence": "조계사와 OCI미술관을 낀 길로, 부처님오신날이면 연등이 거리를 가득 밝히는 연등행사가 펼쳐진다.",
+    "sentence_en": "A street beside Jogyesa temple and the OCI Museum, where on Buddha's Birthday the Lotus Lantern festival fills the road with light.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "윤보선길": {
+    "source_hash": "af240893c729228d49a1bbe7eceaf1843151fec7",
+    "sentence": "4대 대통령 윤보선 가옥에서 이름을 딴 길로, 담장 사이로 한옥과 전통이 어우러지고 자그마한 카페와 갤러리가 인사동의 정취를 잇는 조용한 산책로다.",
+    "sentence_en": "A street named after the house of President Yun Bo-seon, a quiet walking lane where hanok and tradition meet between garden walls and small cafés and galleries carry over the mood of Insadong.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "율곡로10길": {
+    "source_hash": "ba3d4838862f16d610b2d8ee728a024c2b19b815",
+    "sentence": "종묘 궁궐 담장을 따라 걷는 서순라길 곁 골목으로, 한옥을 개조한 식당과 테라스가 있는 카페가 자리한다.",
+    "sentence_en": "An alley beside Seosunra-gil, following the Jongmyo palace wall, with hanok-converted restaurants and a terraced café.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "율곡로22길": {
+    "source_hash": "f122786d9ead143954ec25e12ead9d4f6936b3d2",
+    "sentence": "일제강점기 도로 개설로 끊겼던 종묘와 창덕궁을 잇도록 복원된 궁궐 담장길로, 담장을 따라 걷는 역사 산책로다.",
+    "sentence_en": "A restored palace-wall path reconnecting Jongmyo and Changdeokgung, once severed when the road was cut through in the colonial era, walked along the ramparts as a historical trail.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "율곡로6길": {
+    "source_hash": "e92a9f8b18214b47bc288394b78a43b16925eb7d",
+    "sentence": "서순라길 옆 조용한 동네 골목으로, 공방과 여염집 사이에 숨은 듯한 작은 술집이 하나둘 자리한다.",
+    "sentence_en": "A quiet residential lane beside Seosunra-gil, where small, almost-hidden bars are appearing among craft workshops and ordinary houses.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "을지로11길": {
+    "source_hash": "a4083621efbca4256e113998308117fb8cf54537",
+    "sentence": "골목마다 야장이 들어찬 종로3가·을지로3가 일대의 길로, 저녁이면 고깃집과 곱창집 앞에 줄이 늘어선다.",
+    "sentence_en": "A street in the Jongno 3-ga / Euljiro 3-ga area where open-air grills fill every alley, with evening queues outside the pork and gopchang joints.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "을지로13길": {
+    "source_hash": "ed357bb7ceb0a6503ad66686fa3bbe10a78714b6",
+    "sentence": "을지로3가 노가리 골목의 길로, 루프탑까지 사람이 들어차는 야장 감성의 '힙지로' 밤 문화가 펼쳐진다.",
+    "sentence_en": "A street in the Euljiro 3-ga 'nogari' beer-snack alley, where rooftops fill up for the open-air 'Hipjiro' nightlife.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "을지로35길": {
+    "source_hash": "60d5266bf40a89a49c0a5744746c5a36e8c79db5",
+    "sentence": "방산시장 곁 을지로의 길로, 35년 된 삼계탕 노포와 재즈 LP 카페 같은 힙한 공간이 어우러진다.",
+    "sentence_en": "A Euljiro street beside Bangsan Market, mixing a 35-year-old samgyetang institution with hip spaces like a jazz LP café.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "을지로지하상가": {
+    "source_hash": "107e0d077f2ad6d28ab8addc06d0f4edd18dfbd5",
+    "sentence": "을지로입구역과 이어지는 지하상가로, 마사지숍과 와인 바틀샵, 숨은 노포 식당이 들어선 도심 속 지하 보행로다.",
+    "sentence_en": "An underground arcade linked to Euljiro-ipgu Station, a subterranean walkway lined with massage shops, wine bottle stores and tucked-away old eateries.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "이화장길": {
+    "source_hash": "8485bc0d29c3919a99877d5494b4687df52f66ca",
+    "sentence": "초대 대통령 이승만이 살던 이화장이 자리한 길로, 이화 벽화마을과 낙산으로 이어지는 고즈넉한 산책로다.",
+    "sentence_en": "The street of Ihwajang, home of Korea's first president Syngman Rhee, a serene walk leading up to the Ihwa mural village and Naksan.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "인사동10길": {
+    "source_hash": "fe54ae87f10bfde24923695ac6dc3084298f4d57",
+    "sentence": "인사동 문화의 거리 곁 골목으로, 한옥 스테이와 오래된 닭한마리 노포 등 전통과 관광의 정취가 배어 있다.",
+    "sentence_en": "An alley off the Insadong cultural street, steeped in tradition and tourism, with hanok stays and old dak-hanmari eateries.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "인사동길": {
+    "source_hash": "62149f21d9345196dcd9132ed0c4e05b3401697d",
+    "sentence": "전통찻집과 공예품점, 100여 개의 화랑이 밀집한 서울의 대표 문화 거리로, 차 없는 거리를 따라 한옥과 골목 풍경 속에서 전통과 예술을 여유롭게 즐긴다.",
+    "sentence_en": "Seoul's signature cultural street, packed with traditional tearooms, craft shops and over a hundred galleries; a car-free lane where hanok and old alleys let you take in tradition and art at leisure.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "종로 자전거 전용로": {
+    "source_hash": "6b5b6eee55e1705ea2ccd62eead1f3a9fbd1d2a9",
+    "sentence": "청계천을 따라 이어지는 자전거 전용로로, 광화문에서 중랑천과 한강, 서울숲까지 연결되는 도심 속 라이딩·산책 코스다.",
+    "sentence_en": "A dedicated cycle path along the Cheonggyecheon, linking Gwanghwamun to the Jungnangcheon, the Han River and Seoul Forest, a riding and walking route through the city.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "종로16길": {
+    "source_hash": "67b63c4b41387c2494d96ba28f5ac08762f435d1",
+    "sentence": "옛 피맛골의 자취가 남은 관철동 골목으로, 16세기 종로 옛길을 보여 주는 도시유적전시관과 오래된 뚝배기집 같은 로컬 맛집이 있다.",
+    "sentence_en": "A Gwancheol-dong alley keeping traces of the old Pimatgol lanes, with an urban-relic exhibition of 16th-century Jongno streets and local eateries such as an old ttukbaegi stew house.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "종로28길": {
+    "source_hash": "d5fea5c992dd0e1400c5c38c4e0bc67e63e61e60",
+    "sentence": "종로 예물 주얼리 상가가 모인 길로, 오랜 경력의 금은방과 웨딩밴드 전문점이 늘어서 있다.",
+    "sentence_en": "A street of Jongno's bridal-jewellery arcades, lined with long-established goldsmiths and wedding-band specialists.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "종로38길": {
+    "source_hash": "f712f761b4845a86a17a797dd3f04296108e6e20",
+    "sentence": "청계천 곁 종로5가의 길로, 오래된 낙지볶음 노포와 등산·백패킹 용품점, 38년 경력 시계 수리 장인의 가게가 이어진다.",
+    "sentence_en": "A Jongno 5-ga street beside the Cheonggyecheon, lined with an old nakji-stir-fry eatery, hiking and backpacking gear shops and a watch-repair craftsman of 38 years.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "종로39길": {
+    "source_hash": "49cb5043e2cf1478699dd6bb56a35d58885b9031",
+    "sentence": "종로3가 골목에 시간이 멈춘 듯한 39년 전통의 경양식 돈가스 노포가 자리한 레트로한 길이다.",
+    "sentence_en": "A retro Jongno 3-ga alley home to a 39-year-old Western-style pork-cutlet diner where time seems to have stopped.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "종로40가길": {
+    "source_hash": "fe55993cc0576031dcdcf1f5928dd06197b775d4",
+    "sentence": "동대문 닭한마리 골목과 신진시장이 맞닿은 길로, 오래된 닭한마리집과 생선구이·빈대떡 노포가 시장의 활기를 낸다.",
+    "sentence_en": "A street where the Dongdaemun dak-hanmari alley meets Sinjin Market, its old chicken-stew, grilled-fish and bindaetteok eateries giving off a market buzz.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "창경궁로12길": {
+    "source_hash": "91a038fb04bfd566ab5b9c65bcbf040cd3ff8178",
+    "sentence": "광장시장과 세운상가 사이의 길로, 한복 원단과 옷감을 파는 시장 상가가 이어지고 늘 사람들로 붐빈다.",
+    "sentence_en": "A street between Gwangjang Market and Sewoon Sangga, lined with market stalls selling hanbok fabric and cloth and always thick with people.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "창덕궁1길": {
+    "source_hash": "813f98c3afec57cf3dd94c023bbc2b37676a8770",
+    "sentence": "창덕궁 담장 곁 한옥마을의 길로, 궁궐을 둘러보고 들르기 좋은 한옥 맛집과 브런치 카페가 자리한다.",
+    "sentence_en": "A hanok-village street beside the Changdeokgung wall, with hanok restaurants and brunch cafés handy for a stop after visiting the palace.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "창덕궁길": {
+    "source_hash": "1479862920c24b860763629c19ca3a0b87d2ed14",
+    "sentence": "창덕궁 담장을 따라 원서동으로 이어지는 돌담 산책길로, 한옥 감성 골목에 창덕궁이 내려다보이는 카페가 자리한다.",
+    "sentence_en": "A stone-wall walking lane following the Changdeokgung wall into Wonseo-dong, with hanok-mood alleys and cafés that look over the palace.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "청와대로": {
+    "source_hash": "410d1947abf2422c2d98cb9acb247cc2df747d79",
+    "sentence": "청와대로 이어지는 길로, 대중에 개방된 옛 대통령 관저 청와대와 경복궁을 둘러보려는 방문객이 찾는다.",
+    "sentence_en": "The road up to Cheong Wa Dae, drawing visitors to the now publicly opened former presidential residence and nearby Gyeongbokgung.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "팔판길": {
+    "source_hash": "8995552ff19fe9902f4f5515bd88051454d7eac0",
+    "sentence": "삼청로에서 갈라지는 삼청동의 조용한 골목으로, 종로구가 우수 골목길로 꼽은 길답게 아기자기한 분식집과 스콘 가게가 정겹게 자리한다.",
+    "sentence_en": "A quiet Samcheong-dong lane branching off Samcheong-ro, named a 'model alley' by the district, with endearing snack shops and a scone café.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "평화시장 2층 3층 연결 통로": {
+    "source_hash": "0929b052602fd437c034d3a39ce10ff305ef70ac",
+    "sentence": "평화시장 위층을 잇는 연결 통로로, 노동운동가 전태일의 자취가 서린 시장과 전태일기념관, 노동인권의 길로 이어진다.",
+    "sentence_en": "A passage linking the upper floors of Pyeonghwa Market, connecting to the Jeon Tae-il Memorial and the labour-rights trail in a market steeped in the labour activist's legacy.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  },
+  "피마길": {
+    "source_hash": "93f4ff6f7b4374f99958fd9f40dd65906bb41e43",
+    "sentence": "조선시대 서민들이 고관의 행차를 피해 다니던 데서 이름이 유래한 좁은 골목으로, 옛 목로술집의 자취를 이어 지금도 갈매기살·곱창 골목이 밤늦게까지 활기를 띤다.",
+    "sentence_en": "A narrow alley named for how commoners once slipped past noble processions in the Joseon era; heir to its old taverns, it still buzzes late with skirt-meat and gopchang grill joints.",
+    "lang": "ko+en",
+    "model": "claude-opus-4-8 (in-session)",
+    "generated_at": "2026-07-24"
+  }
+}

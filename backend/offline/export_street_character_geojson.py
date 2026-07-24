@@ -20,6 +20,7 @@ import sys
 import psycopg
 
 from offline.db import get_dsn
+from offline.street_description import ko_template, load_cache
 
 FRONTEND = pathlib.Path(__file__).resolve().parents[2] / "web" / "frontend"
 
@@ -67,11 +68,17 @@ FROM (
              WITH ORDINALITY AS u(sig, cnt, ord)
       ) END,
       'commerce_count', commerce_count,
+      -- Raw top categories (Korean labels), used to build the Tier-B template
+      -- description in Python when a street has no LLM sentence.
+      'commerce_cats', commerce_signature[1:3],
       'evidence', CASE
         WHEN confidence >= %(min_conf)s AND commerce_count >= %(min_shops)s THEN 'both'
         WHEN confidence >= %(min_conf)s                                     THEN 'text'
         ELSE 'commerce' END,
-      'description', description,
+      -- description / description_en / description_source are assigned in Python from
+      -- the frozen LLM cache + Tier-B template; the raw DB `description` (concatenated
+      -- wiki+blog) is intentionally NOT exported anymore. `why` (above) is kept but
+      -- Python nulls it for non-LLM streets so admin-lede keywords don't leak.
       'confidence', confidence
     )
   ) AS feature
@@ -96,6 +103,30 @@ def export(zone_slug: str, show_all: bool = False,
                             "min_conf": min_conf, "min_shops": min_shops})
         collection = cur.fetchone()[0]  # psycopg returns jsonb as a Python dict
 
+    # Assign the final description per feature from the frozen LLM cache (Tier A,
+    # grounded ko + en sentence) or the deterministic commerce template (Tier B).
+    # `description_source` in {llm, template, none} drives both debug and UI styling.
+    cache = load_cache(zone_slug)
+    n_llm = n_tmpl = 0
+    for feat in collection["features"]:
+        p = feat["properties"]
+        entry = cache.get(p.get("name"))
+        if entry and entry.get("sentence"):
+            p["description"] = entry["sentence"]
+            p["description_en"] = entry.get("sentence_en", "")
+            p["description_source"] = "llm"
+            n_llm += 1
+        else:
+            is_pieton = p.get("walkability") == "pieton"
+            tmpl = ko_template(p.get("commerce_cats") or [],
+                               p.get("commerce_count") or 0, is_pieton)
+            p["description"] = tmpl
+            p["description_en"] = ""
+            p["description_source"] = "template" if tmpl else "none"
+            n_tmpl += 1 if tmpl else 0
+            p["why"] = None  # keep the fingerprint "why" only for LLM (Tier A) streets
+        p.pop("commerce_cats", None)  # internal helper, not needed on the client
+
     out_path = FRONTEND / f"street-character-{zone_slug}.geojson"
     # ensure_ascii=False keeps Korean street names/descriptions readable
     out_path.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
@@ -103,6 +134,8 @@ def export(zone_slug: str, show_all: bool = False,
     n = len(collection["features"])
     scope = "all" if show_all else f"confidence >= {min_conf} OR commerce_count >= {min_shops}"
     print(f"Exported {n} street characters ({scope}) -> {out_path}")
+    print(f"  descriptions: {n_llm} LLM (grounded ko+en) + {n_tmpl} template, "
+          f"{n - n_llm - n_tmpl} none")
     return out_path
 
 

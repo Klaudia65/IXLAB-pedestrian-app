@@ -32,6 +32,11 @@
   .maplibregl-popup-content .why{color:var(--accent);font-weight:700;}
   .maplibregl-popup-content .commerce{color:#1f6f68;font-weight:700;}
   .maplibregl-popup-content .desc{color:var(--ink-soft);line-height:1.45;margin-top:5px;display:block;}
+  /* Ambiance sentence: hero line for a grounded LLM description (Tier A). */
+  .maplibregl-popup-content .amb{font-size:13px;color:var(--ink);line-height:1.5;margin:3px 0 5px;font-weight:600;}
+  .maplibregl-popup-content .amb-en{display:block;font-size:11.5px;color:var(--ink-soft);line-height:1.45;font-weight:400;font-style:italic;margin-top:2px;}
+  /* Tier-B template description: same slot, quieter (factual fallback). */
+  .maplibregl-popup-content .amb.tmpl{font-weight:400;color:var(--ink-soft);font-style:italic;}
   .maplibregl-popup-content a{color:var(--accent);}
 </style>
 </head>
@@ -199,19 +204,26 @@
       const hasText = p.evidence === 'text' || p.evidence === 'both';
       let html = `<b>${p.name}</b> · ${kind}`;
 
+      // Ambiance sentence (Korean hero line + English companion). A grounded LLM
+      // description (Tier A) reads bold; the deterministic commerce template
+      // (Tier B) reads quieter/italic so the two are visually distinct.
+      if (p.description) {
+        const cls = p.description_source === 'template' ? 'amb tmpl' : 'amb';
+        const en = p.description_en ? `<span class="amb-en">${p.description_en}</span>` : '';
+        html += `<div class="${cls}">${p.description}${en}</div>`;
+      }
       // Local-evidence (commerce) block: the shop-category signature + shop count.
       if (p.commerce_why) {
         html += `<div class="commerce">🏬 ${p.commerce_why}</div>` +
-                `<span class="desc">${p.commerce_count} businesses within 25 m</span>`;
+                `<span class="desc">${p.commerce_count} commerces dans un rayon de 25 m</span>`;
       }
-      // Text block: confidence, the fingerprint "why", article lede + wiki links.
+      // Text provenance: confidence, the fingerprint "why", wiki links (Tier A streets).
       if (hasText) {
         const why = p.why ? `<div class="why">${p.why}</div>` : '';
-        const desc = p.description ? `<span class="desc">${String(p.description).slice(0,180)}…</span>` : '';
         const wiki = p.wikidata
           ? `<a href="https://www.wikidata.org/wiki/${p.wikidata}" target="_blank" rel="noopener">Wikidata</a> · `
           : '';
-        html += `<br>📖 confiance ${Number(p.confidence).toFixed(2)}${why}${desc}` +
+        html += `<br>📖 confiance ${Number(p.confidence).toFixed(2)}${why}` +
                 `<span class="desc">${wiki}<a href="https://ko.wikipedia.org/wiki/${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Wikipédia</a></span>`;
       }
       new maplibregl.Popup({ offset:8 }).setLngLat(e.lngLat).setHTML(html).addTo(map);
