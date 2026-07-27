@@ -27,7 +27,7 @@ couple / groupe ?
 
 | Brique | État | Commentaire |
 |---|---|---|
-| Prototype UI (React CDN) | 🟢 existe | `web/frontend/Seoul Walk.html` : onboarding + écrans map/social |
+| Prototype UI (React CDN) | 🟢 existe | `web/frontend/seoul-walk.html` : onboarding + écrans map/social |
 | Design system | 🟢 existe | `web/design_system/` (couleurs, typo, composants, palette hanok) |
 | Base de données géo (PostGIS) | 🟢 en place | table `pois`, index GiST, tourne en Docker |
 | Collecte de données OSM | 🟢 fonctionne | 1120 POI stockés au 1er run (zone pilote) |

@@ -41,6 +41,7 @@ function App() {
     map2: <RealMapScreen />,
     social: <SocialScreen go={go} />,
     group: <GroupScreen go={go} />,
+    profile: <ProfileScreen go={go} />,
   };
   const isOnboard = ONBOARDING.includes(screen);
 

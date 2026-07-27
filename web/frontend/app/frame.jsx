@@ -82,6 +82,31 @@ function Segmented({ items, value, onChange, dense }) {
 
 }
 
+// ---- horizontal drag-to-scroll for overflow rows ----
+// Scrollbars are hidden app-wide and a desktop wheel scrolls vertically, so an
+// overflowing row isn't obviously scrollable. This makes one draggable (like a
+// touch swipe) and maps vertical wheel deltas to horizontal scroll. Spread the
+// returned props onto the scroll container; attach `ref` to it.
+function useDragScroll() {
+  const ref = React.useRef(null);
+  const drag = React.useRef({ down: false, moved: false, startX: 0, startScroll: 0 });
+  const onPointerDown = (e) => { drag.current = { down: true, moved: false, startX: e.clientX, startScroll: ref.current.scrollLeft }; };
+  const onPointerMove = (e) => {
+    const d = drag.current; if (!d.down) return;
+    const dx = e.clientX - d.startX;
+    if (!d.moved && Math.abs(dx) > 4) { d.moved = true; try { ref.current.setPointerCapture(e.pointerId); } catch (x) {} }
+    if (d.moved) ref.current.scrollLeft = d.startScroll - dx;
+  };
+  const onPointerUp = () => { drag.current.down = false; };
+  // swallow the click that ends a drag so it doesn't also fire the item
+  const onClickCapture = (e) => { if (drag.current.moved) { e.stopPropagation(); e.preventDefault(); drag.current.moved = false; } };
+  const onWheel = (e) => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) ref.current.scrollLeft += e.deltaY; };
+  return {
+    ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onClickCapture, onWheel,
+    style: { cursor: 'grab', userSelect: 'none', touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' },
+  };
+}
+
 const ThemeCtx = React.createContext(THEMES.wander);
 
 // ---- the phone shell ----
@@ -114,7 +139,8 @@ const SCREENS = [
 { id: 'sliders', n: '1B', name: 'Sliders' },
 { id: 'map2', n: '2', name: 'Map · detailed' },
 { id: 'social', n: '3A', name: 'Social' },
-{ id: 'group', n: '3B', name: 'Group · axes' }];
+{ id: 'group', n: '3B', name: 'Group · axes' },
+{ id: 'profile', n: '4', name: 'Profile' }];
 
 
 function Dock({ screen, setScreen }) {
@@ -159,4 +185,4 @@ function Dock({ screen, setScreen }) {
 
 }
 
-Object.assign(window, { StatusBar, Label, PrimaryBtn, Avatar, Segmented, ThemeCtx, DeviceFrame, Dock, SCREENS });
+Object.assign(window, { StatusBar, Label, PrimaryBtn, Avatar, Segmented, ThemeCtx, DeviceFrame, Dock, SCREENS, useDragScroll });

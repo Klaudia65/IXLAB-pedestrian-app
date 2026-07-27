@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Streets locals love — the local thread · Jongno-gu</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Space+Mono&display=swap" rel="stylesheet" />
+
+<style>
+  /* WANDER design system ("Structured Fluidity") — same tokens as the app
+     (web/frontend/app/theme.jsx): teal canvas, seaweed text, cobalt accent. */
+  :root{
+    --paper:#DFF1F1; --paper-2:#CDE9E9; --ink:#143229; --ink-soft:#255A4B;
+    --ink-faint:#5E8A7C; --line:rgba(37,90,75,0.16);
+    --accent:#4456FF; --card:#FFFFFF;
+    --font: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+    --mono: 'Space Mono', 'SF Mono', ui-monospace, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{background:var(--paper);color:var(--ink);font-family:var(--font);
+    display:flex;flex-direction:column;}
+
+  /* Compact header — leaves the map as much of the phone screen as possible. */
+  header{padding:12px 16px 8px;flex:0 0 auto;}
+  header .kick{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent);}
+  header h1{margin:3px 0 3px;font-size:19px;font-weight:800;letter-spacing:-.01em;}
+  header p{margin:0;font-size:12px;color:var(--ink-soft);line-height:1.45;}
+  header p b{color:var(--ink);}
+
+  /* Map fills the rest of the viewport. */
+  .map{position:relative;flex:1 1 auto;min-height:0;width:100%;background:var(--paper-2);}
+
+  /* Legend floats over the map, bottom-left, out of the thumb zone. */
+  .legend{position:absolute;left:12px;bottom:12px;z-index:2;
+    background:rgba(255,255,255,.9);backdrop-filter:blur(3px);
+    border:1px solid var(--line);border-radius:12px;padding:9px 11px;
+    font-size:11px;color:var(--ink-soft);line-height:1.7;max-width:62%;
+    box-shadow:0 4px 20px rgba(37,90,75,0.10);}
+  .legend b{display:block;color:var(--ink);font-size:11.5px;margin-bottom:3px;}
+  .legend .thread{display:inline-block;width:22px;height:0;vertical-align:middle;
+    margin-right:6px;border-top:2.5px dashed var(--accent);}
+  #status{display:block;margin-top:4px;font-size:10px;color:var(--ink-soft);}
+
+  /* Popup — the ambiance sentence is the hero. */
+  .maplibregl-popup-content{font-family:var(--font);border-radius:12px;
+    padding:12px 14px;max-width:270px;box-shadow:0 4px 18px rgba(0,0,0,.16);}
+  .maplibregl-popup-content .name{font-size:15px;font-weight:700;color:var(--ink);
+    display:block;margin-bottom:5px;}
+  /* English ambiance sentence = hero line; Korean original = quiet companion. */
+  .maplibregl-popup-content .amb{font-size:13px;color:var(--ink);line-height:1.5;
+    font-weight:600;}
+  .maplibregl-popup-content .amb-ko{display:block;font-size:11.5px;color:var(--ink-faint);
+    line-height:1.45;font-weight:400;margin-top:4px;}
+  .maplibregl-popup-content .links{display:block;margin-top:8px;font-size:11px;}
+  .maplibregl-popup-content a{color:var(--accent);text-decoration:none;font-weight:600;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kick">Jongno-gu · streets locals love</div>
+  <h1>The local thread</h1>
+  <p>The streets with <b>real character</b> — the ones with an ambiance sentence,
+  not just a shop count. You first see each corridor's <b>main street</b>; as you
+  <b>zoom in</b>, the secondary streets and then the <b>side alleys</b> branching
+  off them appear. Tap a line to read its character.</p>
+</header>
+
+<div class="map" id="map">
+  <div class="legend">
+    <b>Streets locals love</b>
+    <span class="thread"></span> dashed line = characterful street
+    <span id="status">Loading…</span>
+  </div>
+</div>
+
+<script>
+  // Zone bounding box: [W, S, E, N] — same box as the other Jongno maps.
+  const BBOX = [126.97869, 37.56623, 127.01052, 37.58646];
+
+  // Progressive disclosure by zoom:
+  //   below MAIN_MINZOOM      -> only the ~19 headline corridor spines
+  //   MAIN_MINZOOM .. BRANCH  -> all 36 corridor spines
+  //   above BRANCH_MINZOOM    -> spines + their connected side-alley branches
+  const MAIN_MINZOOM = 14.5;
+  const BRANCH_MINZOOM = 15.5;
+
+  // ---- Base map: OpenFreeMap vector, repainted in the WANDER teal palette -----
+  // Same tokens/paints as the app's real map (web/frontend/app/realmap.jsx), so
+  // this page reads as part of the app. Deliberately quiet: the ONLY expressive
+  // layer is the cobalt thread on top.
+  const PAL = { land:'#DFF1F1', land2:'#CDE9E9', card:'#FFFFFF', card2:'#EAF7F7',
+    park:'#A6FFE8', water:'#9FA3FF', inkSoft:'#255A4B' };
+  const baseStyle = {
+    version: 8,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: { omt: { type:'vector', url:'https://tiles.openfreemap.org/planet' } },
+    layers: [
+      { id:'bg', type:'background', paint:{ 'background-color':PAL.land } },
+      { id:'green', type:'fill', source:'omt', 'source-layer':'landcover',
+        filter:['in','class','wood','grass','scrub','park'],
+        paint:{ 'fill-color':PAL.park, 'fill-opacity':0.5 } },
+      { id:'park', type:'fill', source:'omt', 'source-layer':'park',
+        paint:{ 'fill-color':PAL.park, 'fill-opacity':0.4 } },
+      { id:'water', type:'fill', source:'omt', 'source-layer':'water',
+        paint:{ 'fill-color':PAL.water, 'fill-opacity':0.55 } },
+      { id:'building', type:'fill', source:'omt', 'source-layer':'building', minzoom:13,
+        paint:{ 'fill-color':PAL.card2, 'fill-outline-color':PAL.land2, 'fill-opacity':0.85 } },
+      { id:'road-case', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.land2, 'line-width':['interpolate',['linear'],['zoom'],12,1.5,16,9,18,20] } },
+      { id:'road', type:'line', source:'omt', 'source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':PAL.card, 'line-width':['interpolate',['linear'],['zoom'],12,0.6,16,6,18,14] } },
+      { id:'place', type:'symbol', source:'omt', 'source-layer':'place',
+        filter:['in','class','suburb','neighbourhood','quarter'],
+        layout:{ 'text-field':['get','name'], 'text-font':['Noto Sans Regular'],
+          'text-size':['interpolate',['linear'],['zoom'],13,10,17,15],
+          'text-transform':'uppercase','text-letter-spacing':0.12 },
+        paint:{ 'text-color':PAL.inkSoft, 'text-halo-color':PAL.land, 'text-halo-width':1.4 } }
+    ]
+  };
+
+  const map = new maplibregl.Map({
+    container:'map', style:baseStyle,
+    bounds:[[BBOX[0],BBOX[1]],[BBOX[2],BBOX[3]]], fitBoundsOptions:{ padding:20 },
+    attributionControl:{ compact:true }
+  });
+  map.addControl(new maplibregl.NavigationControl({ showCompass:false }), 'top-right');
+
+  const setStatus = (m) => { document.getElementById('status').textContent = m; };
+
+  map.on('load', () => {
+    map.addSource('fil', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+
+    // Shared paint for the cobalt thread. Dashed, thin, crisp; a white casing
+    // underneath keeps it legible over the teal land and pale roads — same
+    // "dashed accent route + white halo" pattern the app's real map uses.
+    const ACCENT = '#4456FF';   // WANDER cobalt accent (theme.jsx --accent)
+    const THREAD_WIDTH = ['interpolate',['linear'],['zoom'],12,1.6,15,3,18,5];
+    const CASING_WIDTH = ['interpolate',['linear'],['zoom'],12,3.5,15,6,18,9];
+    const IS_MAIN   = ['==',['get','part'],'main'];
+    const IS_BRANCH = ['==',['get','part'],'branch'];
+
+    // A "thread" = a white casing + the red dashed line on top, sharing one
+    // filter + minzoom, so a tier appears/disappears as one clean unit.
+    const lineIds = [];
+    function addThread(id, filter, minzoom, opacity) {
+      const common = { source:'fil', filter, ...(minzoom != null ? { minzoom } : {}) };
+      map.addLayer({ id:id+'-casing', type:'line', ...common,
+        layout:{ 'line-cap':'round','line-join':'round' },
+        paint:{ 'line-color':'#fffdf9', 'line-width':CASING_WIDTH, 'line-opacity':0.8 } });
+      map.addLayer({ id, type:'line', ...common,
+        layout:{ 'line-cap':'butt','line-join':'round' },
+        paint:{ 'line-color':ACCENT, 'line-width':THREAD_WIDTH, 'line-opacity':opacity,
+          'line-dasharray':[2,1.6] } });
+      lineIds.push(id);
+    }
+
+    // Tier 1 — headline corridor spines: always visible (main street only).
+    addThread('fil-main-head', ['all', IS_MAIN, ['get','headline']], null, 0.95);
+    // Tier 2 — the remaining corridor spines: from MAIN_MINZOOM.
+    addThread('fil-main-sec', ['all', IS_MAIN, ['!',['get','headline']]], MAIN_MINZOOM, 0.9);
+    // Tier 3 — the side-alley branches connected to a spine: only when zoomed in.
+    addThread('fil-branch', IS_BRANCH, BRANCH_MINZOOM, 0.85);
+
+    // Labels along the thread = parent corridor name, on the SPINE only (one
+    // label per corridor). Two tiers, matching the spine line tiers above.
+    const labelLayout = {
+      'symbol-placement':'line', 'text-field':['get','name'],
+      'text-font':['Noto Sans Regular'],
+      'text-size':['interpolate',['linear'],['zoom'],13,10,18,15]
+    };
+    const labelPaint = { 'text-color':'#2b36b5', 'text-halo-color':'#FFFFFF', 'text-halo-width':1.8 };
+    map.addLayer({ id:'fil-label-head', type:'symbol', source:'fil',
+      filter:['all', IS_MAIN, ['get','headline']], layout:labelLayout, paint:labelPaint });
+    map.addLayer({ id:'fil-label-sec', type:'symbol', source:'fil', minzoom:MAIN_MINZOOM,
+      filter:['all', IS_MAIN, ['!',['get','headline']]], layout:labelLayout, paint:labelPaint });
+
+    // Cache-bust so a stale copy of the geojson can never mask an update.
+    fetch('street-character-locals-jongno.geojson?v=' + Date.now()).then(r => r.json()).then(gj => {
+      map.getSource('fil').setData(gj);
+      const spines = (gj.features || []).filter(f => f.properties.part === 'main');
+      const head = spines.filter(f => f.properties.headline).length;
+      setStatus(`${spines.length} corridors · ${head} featured`);
+    }).catch(e => { console.error(e); setStatus('geojson not found'); });
+
+    // ---- Popup: corridor name + ambiance sentence (ko + en) + wiki link -------
+    // Every red line (spine or branch) carries the same corridor properties.
+    const CLICKABLE = lineIds;
+    const showPopup = (e) => {
+      const p = e.features[0].properties;
+      let html = `<span class="name">${p.name}</span>`;
+      // English ambiance sentence is the hero; the Korean original follows as a
+      // quiet companion. Fall back to Korean alone if no English exists.
+      const en = p.description_en, ko = p.description;
+      if (en || ko) {
+        const koLine = (en && ko) ? `<span class="amb-ko">${ko}</span>` : '';
+        html += `<div class="amb">${en || ko}${koLine}</div>`;
+      }
+      // Wikipedia / Wikidata provenance when the corridor is Wiki-backed.
+      const links = [];
+      if (p.wikidata) links.push(`<a href="https://www.wikidata.org/wiki/${p.wikidata}" target="_blank" rel="noopener">Wikidata</a>`);
+      if (p.wikipedia || p.wikidata) links.push(`<a href="https://ko.wikipedia.org/wiki/${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Wikipédia</a>`);
+      if (links.length) html += `<span class="links">${links.join(' · ')}</span>`;
+      new maplibregl.Popup({ offset:10 }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+    };
+    CLICKABLE.forEach(id => {
+      map.on('click', id, showPopup);
+      map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+    });
+  });
+</script>
+</body>
+</html>

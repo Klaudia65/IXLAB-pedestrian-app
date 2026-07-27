@@ -22,6 +22,9 @@ const MAP_PAL = {
   land: '#DFF1F1', land2: '#CDE9E9', card: '#FFFFFF', card2: '#EAF7F7',
   ink: '#143229', inkSoft: '#255A4B', inkFaint: '#5E8A7C',
   accent: '#4456FF', park: '#A6FFE8', water: '#9FA3FF', good: '#34C38F',
+  // recommended-path "heatmap" ramp — hot yellow core → orange edge (thermal glow).
+  // 4 stops so the yellow→orange smudge blends smoothly with no visible banding.
+  heatCore: '#FFE873', heatInner: '#FFC24D', heatMid: '#FF9A3D', heatEdge: '#FF6A1F',
   street: '#5E8A7C',               // faint seaweed for the base street network
 };
 
@@ -189,6 +192,30 @@ function coordsOf(geom) {
   return out;
 }
 
+// Sample evenly-spaced points (~stepM metres apart) along every line in
+// `features`, so a heatmap layer — which only takes points — can render the
+// recommended streets as one continuous heat cloud. Metres are approximated with
+// a flat lng/lat scale, which is plenty accurate at Jongno's scale.
+function densifyToPoints(features, stepM = 4) {
+  const MLAT = 111320, MLNG = 111320 * Math.cos(37.57 * Math.PI / 180);
+  const pts = [];
+  const push = ([x, y]) => pts.push({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [x, y] } });
+  (features || []).forEach(f => {
+    const g = f.geometry; if (!g) return;
+    const lines = g.type === 'MultiLineString' ? g.coordinates : g.type === 'LineString' ? [g.coordinates] : [];
+    lines.forEach(line => {
+      for (let i = 0; i < line.length - 1; i++) {
+        const [ax, ay] = line[i], [bx, by] = line[i + 1];
+        const segLen = Math.hypot((bx - ax) * MLNG, (by - ay) * MLAT);
+        const n = Math.max(1, Math.round(segLen / stepM));
+        for (let k = 0; k < n; k++) { const t = k / n; push([ax + (bx - ax) * t, ay + (by - ay) * t]); }
+      }
+      if (line.length) push(line[line.length - 1]);   // include the final vertex
+    });
+  });
+  return { type: 'FeatureCollection', features: pts };
+}
+
 // VIBE resolver — read the sliders, map each slider axis to the per-named-street
 // score column of the same name, then rank streets by how close their scores sit
 // to the target vibe.
@@ -281,7 +308,9 @@ function rankByVibe(target, feats) {
       sub: `${Math.round(score * 100)}% match · noted on ${covered}/${axes.length} ${axes.length > 1 ? 'axes' : 'axis'}` });
   });
   // rank on alignment ONLY — coverage is shown, not used to sort.
-  return out.sort((a, b) => b.score - a.score).slice(0, 12);
+  // Top 20 streets (was 12): the vibe/preset views surface them as map popups
+  // rather than a list, so a longer set stays legible.
+  return out.sort((a, b) => b.score - a.score).slice(0, 20);
 }
 
 // (runVibe reads readVibeTarget() directly now — it needs the target to decide
@@ -677,6 +706,205 @@ function ChipRow({ activeKind, onVibe, onPreset, onCategory }) {
 }
 
 /* ============================================================
+   LOCAL FAVORITE — "streets locals love" (the local thread),
+   reimplemented natively so it lives inside the app like the
+   other screens. This DUPLICATES the standalone page
+   street-character-locals-jongno.html on purpose — we keep both
+   for now and drop whichever copy we don't use later.
+
+   Same WANDER palette + progressive disclosure by zoom:
+     below MAIN_MINZOOM   → only the headline corridor spines
+     MAIN_MINZOOM..BRANCH → all corridor spines
+     above BRANCH_MINZOOM → spines + their side-alley branches
+   Tap a cobalt thread to read the corridor's ambiance sentence.
+   ============================================================ */
+const LOCALS_MAIN_MINZOOM = 14.5;
+const LOCALS_BRANCH_MINZOOM = 15.5;
+
+// Popup styling for the ambiance card (scoped by the .amb/.name classes, so it
+// never touches the search map's default popups). Hexes mirror the WANDER tokens.
+const LOCALS_POPUP_CSS = `
+.maplibregl-popup-content{font-family:'Space Grotesk','Segoe UI',system-ui,sans-serif;border-radius:12px;padding:12px 14px;max-width:270px;box-shadow:0 4px 18px rgba(0,0,0,.16);}
+.maplibregl-popup-content .name{font-size:15px;font-weight:700;color:#143229;display:block;margin-bottom:5px;}
+.maplibregl-popup-content .amb{font-size:13px;color:#143229;line-height:1.5;font-weight:600;}
+.maplibregl-popup-content .amb-ko{display:block;font-size:11.5px;color:#5E8A7C;line-height:1.45;font-weight:400;margin-top:4px;}
+.maplibregl-popup-content .links{display:block;margin-top:8px;font-size:11px;}
+.maplibregl-popup-content a{color:#4456FF;text-decoration:none;font-weight:600;}
+`;
+
+function LocalFavoriteView() {
+  const t = React.useContext(ThemeCtx);
+  const elRef = React.useRef(null);
+  const [status, setStatus] = React.useState('Loading…');
+
+  React.useEffect(() => {
+    if (!window.maplibregl) { setStatus('⚠️ MapLibre failed to load (offline?).'); return; }
+    let cancelled = false;
+    const map = new maplibregl.Map({
+      container: elRef.current, style: buildBaseStyle(),
+      bounds: [[JONGNO_BBOX[0], JONGNO_BBOX[1]], [JONGNO_BBOX[2], JONGNO_BBOX[3]]],
+      fitBoundsOptions: { padding: 20 }, attributionControl: { compact: true },
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+    map.on('load', () => {
+      if (cancelled) return;
+      map.addSource('fil', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+      // Shared paint for the cobalt thread: a white casing under a thin dashed
+      // accent line — same "dashed accent route + halo" pattern as the search map.
+      const ACCENT = MAP_PAL.accent;
+      const THREAD_WIDTH = ['interpolate', ['linear'], ['zoom'], 12, 1.6, 15, 3, 18, 5];
+      const CASING_WIDTH = ['interpolate', ['linear'], ['zoom'], 12, 3.5, 15, 6, 18, 9];
+      const IS_MAIN = ['==', ['get', 'part'], 'main'];
+      const IS_BRANCH = ['==', ['get', 'part'], 'branch'];
+
+      const lineIds = [];
+      function addThread(id, filter, minzoom, opacity) {
+        const common = { source: 'fil', filter, ...(minzoom != null ? { minzoom } : {}) };
+        map.addLayer({ id: id + '-casing', type: 'line', ...common,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#fffdf9', 'line-width': CASING_WIDTH, 'line-opacity': 0.8 } });
+        map.addLayer({ id, type: 'line', ...common,
+          layout: { 'line-cap': 'butt', 'line-join': 'round' },
+          paint: { 'line-color': ACCENT, 'line-width': THREAD_WIDTH, 'line-opacity': opacity, 'line-dasharray': [2, 1.6] } });
+        lineIds.push(id);
+      }
+
+      // Tier 1 — headline spines (always). Tier 2 — the rest of the spines
+      // (from MAIN_MINZOOM). Tier 3 — side-alley branches (only when zoomed in).
+      addThread('fil-main-head', ['all', IS_MAIN, ['get', 'headline']], null, 0.95);
+      addThread('fil-main-sec', ['all', IS_MAIN, ['!', ['get', 'headline']]], LOCALS_MAIN_MINZOOM, 0.9);
+      addThread('fil-branch', IS_BRANCH, LOCALS_BRANCH_MINZOOM, 0.85);
+
+      // One name label per corridor, on the spine only (two tiers, like the lines).
+      const labelLayout = {
+        'symbol-placement': 'line', 'text-field': ['get', 'name'],
+        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 13, 10, 18, 15],
+      };
+      const labelPaint = { 'text-color': '#2b36b5', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.8 };
+      map.addLayer({ id: 'fil-label-head', type: 'symbol', source: 'fil',
+        filter: ['all', IS_MAIN, ['get', 'headline']], layout: labelLayout, paint: labelPaint });
+      map.addLayer({ id: 'fil-label-sec', type: 'symbol', source: 'fil', minzoom: LOCALS_MAIN_MINZOOM,
+        filter: ['all', IS_MAIN, ['!', ['get', 'headline']]], layout: labelLayout, paint: labelPaint });
+
+      // Cache-bust so a stale geojson can't mask an update.
+      fetch('street-character-locals-jongno.geojson?v=' + Date.now()).then(r => r.json()).then(gj => {
+        if (cancelled) return;
+        map.getSource('fil').setData(gj);
+        const spines = (gj.features || []).filter(f => f.properties.part === 'main');
+        const head = spines.filter(f => f.properties.headline).length;
+        setStatus(`${spines.length} corridors · ${head} featured`);
+      }).catch(() => setStatus('geojson not found'));
+
+      // Popup: corridor name + ambiance sentence (en hero, ko companion) + wiki links.
+      const showPopup = (e) => {
+        const p = e.features[0].properties;
+        let html = `<span class="name">${p.name}</span>`;
+        const en = p.description_en, ko = p.description;
+        if (en || ko) {
+          const koLine = (en && ko) ? `<span class="amb-ko">${ko}</span>` : '';
+          html += `<div class="amb">${en || ko}${koLine}</div>`;
+        }
+        const links = [];
+        if (p.wikidata) links.push(`<a href="https://www.wikidata.org/wiki/${p.wikidata}" target="_blank" rel="noopener">Wikidata</a>`);
+        if (p.wikipedia || p.wikidata) links.push(`<a href="https://ko.wikipedia.org/wiki/${encodeURIComponent(p.name)}" target="_blank" rel="noopener">Wikipédia</a>`);
+        if (links.length) html += `<span class="links">${links.join(' · ')}</span>`;
+        new maplibregl.Popup({ offset: 10 }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+      };
+      lineIds.forEach(id => {
+        map.on('click', id, showPopup);
+        map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
+      });
+    });
+
+    return () => { cancelled = true; map.remove(); };
+  }, []);
+
+  return (
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: MAP_TAB_H, zIndex: 15,
+      display: 'flex', flexDirection: 'column', background: 'var(--paper)' }}>
+      <style>{LOCALS_POPUP_CSS}</style>
+
+      {/* compact header — leaves the map as much room as possible */}
+      <div style={{ flex: '0 0 auto', padding: '10px 16px 8px' }}>
+        <div style={{ fontFamily: t.fontMono, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)' }}>Jongno-gu · streets locals love</div>
+        <div style={{ fontFamily: t.fontHead, fontWeight: 800, fontSize: 19, letterSpacing: '-0.01em', margin: '3px 0', color: 'var(--ink)' }}>The local thread</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
+          The streets with <b style={{ color: 'var(--ink)' }}>real character</b> — the ones with an ambiance
+          sentence, not just a shop count. <b style={{ color: 'var(--ink)' }}>Zoom in</b> to reveal secondary
+          streets and then side alleys. Tap a line to read its character.
+        </div>
+      </div>
+
+      {/* the map fills the rest, with the legend floating bottom-left */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+        <div ref={elRef} style={{ position: 'absolute', inset: 0 }} />
+        <div style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 2, maxWidth: '62%',
+          background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)',
+          border: '1px solid var(--line)', borderRadius: 12, padding: '9px 11px',
+          fontSize: 11, color: 'var(--ink-soft)', lineHeight: 1.7 }}>
+          <b style={{ display: 'block', color: 'var(--ink)', fontSize: 11.5, marginBottom: 3 }}>Streets locals love</b>
+          <span style={{ display: 'inline-block', width: 22, height: 0, verticalAlign: 'middle', marginRight: 6, borderTop: '2.5px dashed var(--accent)' }} />
+          dashed line = characterful street
+          <span style={{ display: 'block', marginTop: 4, fontSize: 10 }}>{status}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   BOTTOM TAB BAR — sub-navigation inside the detailed map:
+   "Search" (the live map + unified search) and "Local favorite"
+   (the streets-locals-love thread, embedded in mobile format).
+   The Local-favorite icon joins a location pin with a heart,
+   after the saved-place marker in the brief image.
+   ============================================================ */
+const MAP_TAB_H = 66;   // tab-bar height, incl. room for the phone's home indicator
+
+function MapTabBar({ tab, setTab }) {
+  const t = React.useContext(ThemeCtx);
+  const items = [
+    { id: 'search', label: 'Search',
+      icon: (on) => (
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none"
+          stroke={on ? 'var(--accent)' : 'var(--ink-faint)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
+        </svg>) },
+    { id: 'locals', label: 'Local favorite',
+      icon: (on) => (
+        <svg width="23" height="23" viewBox="0 0 24 24" fill="none"
+          stroke={on ? 'var(--accent)' : 'var(--ink-faint)'} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+          {/* location pin — adapts to the active/inactive colour */}
+          <path d="M12 22s7-6.1 7-12A7 7 0 0 0 5 10c0 5.9 7 12 7 12z" />
+          {/* heart nested inside — kept a warm red, echoing the saved-place marker */}
+          <path d="M12 13.6c-1-.9-3-2.2-3-3.9a1.7 1.7 0 0 1 3-1.05 1.7 1.7 0 0 1 3 1.05c0 1.7-2 3-3 3.9z"
+            fill="#FF4D5E" stroke="#FF4D5E" strokeWidth="1" />
+        </svg>) },
+  ];
+  return (
+    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20, height: MAP_TAB_H,
+      display: 'flex', alignItems: 'stretch', justifyContent: 'space-around', paddingTop: 8, paddingBottom: 14,
+      background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
+      borderTop: '1px solid var(--line)' }}>
+      {items.map(it => {
+        const on = it.id === tab;
+        return (
+          <button key={it.id} onClick={() => setTab(it.id)}
+            style={{ flex: 1, border: 'none', background: 'transparent', cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '4px 0' }}>
+            {it.icon(on)}
+            <span style={{ fontFamily: t.fontUI, fontSize: 11, fontWeight: on ? 800 : 600,
+              color: on ? 'var(--ink)' : 'var(--ink-faint)' }}>{it.label}</span>
+          </button>);
+      })}
+    </div>);
+}
+
+/* ============================================================
    THE MAP SCREEN
    ============================================================ */
 function RealMapScreen() {
@@ -691,16 +919,32 @@ function RealMapScreen() {
   const startNodeRef = React.useRef(null);// fake-GPS start, snapped to a graph node
 
   const [status, setStatus] = React.useState('Loading the neighbourhood…');
+  const [tab, setTab] = React.useState('search');     // bottom nav: 'search' | 'locals'
   const [query, setQuery] = React.useState('');
   const [kind, setKind] = React.useState(null);       // 'vibe' | 'function:<id>' | 'place'
   const [title, setTitle] = React.useState('');
   const [results, setResults] = React.useState([]);
+  // Mirror `results` into a ref: the map's click handler is registered once at
+  // load time, so its closure would otherwise keep pointing at the first (empty)
+  // results array and never find the tapped street. The ref always holds latest.
+  const resultsRef = React.useRef([]);
+  resultsRef.current = results;
   const [selected, setSelected] = React.useState(null);
   const [sheetOpen, setSheetOpen] = React.useState(true);
   const [routeStats, setRouteStats] = React.useState(null);  // {m, min, legs} of the drawn walk
   const [walkOptions, setWalkOptions] = React.useState(null);// proposed walks joining the vibe streets
   const [vibeStreets, setVibeStreets] = React.useState(null);// the street list to return to from a walk
   const routeTargetRef = React.useRef(null);                 // the vibe target the streets came from
+  // Build the favorite object for a result — its real geometry stored as a
+  // compact thumbnail so the profile can draw the street's actual shape.
+  function favFromResult(r) {
+    return {
+      name: r.name,
+      sub: r.sub || '',
+      points: geomToThumb(r.feature && r.feature.geometry),
+      kind: r.type === 'nature' ? 'nature' : 'street',
+    };
+  }
 
   // ---- init the map once, on mount ----
   React.useEffect(() => {
@@ -744,14 +988,48 @@ function RealMapScreen() {
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': MAP_PAL.accent, 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 4, 16, 7, 19, 11], 'line-dasharray': [1.4, 1.1] } });
 
-      // highlighted candidates — halo + accent line, drawn on top
+      // highlighted candidates — the "recommended paths", drawn as a real
+      // "heat cloud" with MapLibre's native heatmap layer. A heatmap needs POINTS,
+      // so 'candidates-heat' holds points sampled densely along each street
+      // (densifyToPoints); the line source 'candidates' is kept only as an
+      // invisible hit-target so streets stay tappable. A native heatmap blends
+      // continuously — no line caps/joins, so no stray dots or spurs — and the
+      // density→colour ramp caps out, so crossings stay warm without hard blobs.
+      map.addSource('candidates-heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'cand-heat', type: 'heatmap', source: 'candidates-heat',
+        paint: {
+          // every sample weighs the same; density comes from how many samples fall
+          // within the radius, so a single street already reads hot along its spine.
+          // Weight/intensity kept low so only the very spine peaks — a thin core
+          // with a wide, soft falloff rather than a fat saturated ribbon.
+          'heatmap-weight': 0.25,
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 13, 0.8, 16, 1, 19, 1.2],
+          // radius in screen px — trimmed for a finer ribbon. Grows with zoom fast
+          // enough that the ~4 m samples always overlap (no beads along the path).
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 13, 9, 16, 18, 19, 34],
+          // thermal ramp, PLATEAUED at the top and with a long soft tail at the
+          // bottom. The hot yellow core only appears from density 0.65 (a thin
+          // spine) and then HOLDS to 1, so junctions where paths glue together land
+          // on the same yellow instead of flaring brighter. Most of the range
+          // (0 → 0.65) is a gently-strengthening orange, so the edges feather out
+          // softly instead of ending on a hard line.
+          'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'],
+            0,    'rgba(255,106,31,0)',
+            0.08, 'rgba(255,138,61,0.16)',
+            0.22, 'rgba(255,138,61,0.5)',
+            0.38, MAP_PAL.heatMid,
+            0.52, MAP_PAL.heatInner,
+            0.65, MAP_PAL.heatCore,
+            1,    MAP_PAL.heatCore],
+          'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.82, 19, 0.78],
+        } });
+
+      // invisible line over the same streets — carries clicks / hover only.
       map.addSource('candidates', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-      map.addLayer({ id: 'cand-halo', type: 'line', source: 'candidates',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#FFFFFF', 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 6, 16, 10, 19, 16], 'line-opacity': 0.9 } });
       map.addLayer({ id: 'cand-line', type: 'line', source: 'candidates',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': MAP_PAL.accent, 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 3, 16, 5.5, 19, 9] } });
+        paint: { 'line-color': MAP_PAL.heatCore, 'line-opacity': 0,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 13, 10, 16, 16, 19, 22] } });
 
       map.on('click', 'cand-line', e => selectResultByName(e.features[0].properties.name));
       map.on('mouseenter', 'cand-line', () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -804,7 +1082,7 @@ function RealMapScreen() {
   function clearHighlights() {
     const map = mapRef.current;
     if (!map) return;
-    ['candidates', 'green-cand', 'route'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
+    ['candidates', 'candidates-heat', 'green-cand', 'route'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
   }
   // fit the view to an arbitrary set of features (any geometry type).
   function fitTo(features) {
@@ -819,8 +1097,10 @@ function RealMapScreen() {
     const map = mapRef.current;
     if (!map || !map.getSource('candidates')) return;
     clearHighlights();
-    map.getSource('candidates').setData({ type: 'FeatureCollection', features: list.map(r => r.feature) });
-    fitTo(list.map(r => r.feature));
+    const feats = list.map(r => r.feature);
+    map.getSource('candidates').setData({ type: 'FeatureCollection', features: feats });
+    map.getSource('candidates-heat').setData(densifyToPoints(feats));
+    fitTo(feats);
   }
   // NATURE highlight (nature category): draw the recommended walks as green
   // routes and fit the view to them.
@@ -837,7 +1117,9 @@ function RealMapScreen() {
     const map = mapRef.current;
     if (!map || !map.getSource('candidates') || !map.getSource('green-cand')) return;
     clearHighlights();
-    map.getSource('candidates').setData({ type: 'FeatureCollection', features: streetList.map(r => r.feature) });
+    const streetFeats = streetList.map(r => r.feature);
+    map.getSource('candidates').setData({ type: 'FeatureCollection', features: streetFeats });
+    map.getSource('candidates-heat').setData(densifyToPoints(streetFeats));
     map.getSource('green-cand').setData({ type: 'FeatureCollection', features: natureList.map(r => r.feature) });
     fitTo([...streetList, ...natureList].map(r => r.feature));
   }
@@ -965,25 +1247,86 @@ function RealMapScreen() {
     clearHighlights();
   }
 
+  // Build the map popup for a result: name + descriptor, plus a three-dots (⋮)
+  // menu. Hovering the dots reveals "Add path to favorites" (or "Remove…" when
+  // already saved). Built as raw DOM because MapLibre popups live outside React.
+  function buildPopupNode(r) {
+    const el = document.createElement('div');
+    el.style.cssText = `font-family:${t.fontUI};min-width:150px;`;
+
+    const title = document.createElement('div');
+    title.textContent = r.name;
+    title.style.cssText = `font-weight:700;font-size:13.5px;color:${MAP_PAL.ink};`;
+    el.appendChild(title);
+    if (r.sub) {
+      const sub = document.createElement('div');
+      sub.textContent = r.sub;
+      sub.style.cssText = `font-size:11px;color:${MAP_PAL.inkSoft};margin-top:2px;`;
+      el.appendChild(sub);
+    }
+
+    // only real path geometries can be saved (not route-itinerary points)
+    const canFav = r.feature && r.feature.geometry && r.feature.geometry.type !== 'Point';
+    if (!canFav) return el;
+
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:relative;display:flex;justify-content:flex-end;margin-top:8px;';
+
+    const kebab = document.createElement('button');
+    kebab.type = 'button';
+    kebab.setAttribute('aria-label', 'Path options');
+    kebab.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="${MAP_PAL.inkSoft}"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>`;
+    kebab.style.cssText = 'border:none;background:transparent;cursor:pointer;padding:3px;border-radius:8px;display:flex;align-items:center;';
+
+    const menu = document.createElement('button');
+    menu.type = 'button';
+    menu.style.cssText = `display:none;position:absolute;bottom:calc(100% + 4px);right:0;white-space:nowrap;align-items:center;gap:7px;border:1px solid ${MAP_PAL.card2};background:#fff;border-radius:10px;padding:8px 11px;box-shadow:0 8px 22px rgba(20,20,25,.16);cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;color:${MAP_PAL.ink};`;
+    const paint = () => {
+      const fav = isFavorite(r.name);
+      menu.innerHTML =
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="${fav ? MAP_PAL.accent : 'none'}" stroke="${MAP_PAL.accent}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-9.6-9A5.4 5.4 0 0 1 12 5.5 5.4 5.4 0 0 1 21.6 12C19.5 16.4 12 21 12 21z"/></svg>` +
+        `<span>${fav ? 'Remove from favorites' : 'Add path to favorites'}</span>`;
+    };
+    paint();
+
+    // hover reveals the menu; a short close delay bridges the gap dots → menu
+    let hideTimer = null;
+    const show = () => { clearTimeout(hideTimer); menu.style.display = 'inline-flex'; kebab.style.background = MAP_PAL.card2; };
+    const scheduleHide = () => { hideTimer = setTimeout(() => { menu.style.display = 'none'; kebab.style.background = 'transparent'; }, 180); };
+    kebab.addEventListener('mouseenter', show);
+    kebab.addEventListener('mouseleave', scheduleHide);
+    menu.addEventListener('mouseenter', show);
+    menu.addEventListener('mouseleave', scheduleHide);
+    // touch fallback: tap the dots to open, tap the item to save/remove
+    kebab.addEventListener('click', e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'inline-flex' : 'none'; });
+    menu.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(favFromResult(r)); paint(); });
+
+    bar.appendChild(menu);
+    bar.appendChild(kebab);
+    el.appendChild(bar);
+    return el;
+  }
+
   function selectResultByName(name) {
-    const r = results.find(x => x.name === name);
+    const r = resultsRef.current.find(x => x.name === name);
     if (!r) return;
     setSelected(name);
     const map = mapRef.current;
     const pts = coordsOf(r.feature.geometry);
     const mid = pts[Math.floor(pts.length / 2)];
-    if (map && mid) new maplibregl.Popup({ offset: 10 }).setLngLat(mid)
-      .setHTML(`<b>${r.name}</b><br>${r.sub}`).addTo(map);
+    if (map && mid) new maplibregl.Popup({ offset: 10, maxWidth: '260px' }).setLngLat(mid)
+      .setDOMContent(buildPopupNode(r)).addTo(map);
   }
 
   const ease = 'cubic-bezier(.22,1,.36,1)';
 
   return (
     <div style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden', background: 'var(--map-land)' }}>
-      {/* the map fills the screen */}
+      {/* the map fills the screen (kept mounted even on the Local-favorite tab) */}
       <div ref={mapEl} style={{ position: 'absolute', inset: 0 }} />
 
-      {/* search overlay, pinned to the top */}
+      {/* search overlay, pinned to the top — Search tab only */}
+      {tab === 'search' && (
       <div style={{ position: 'absolute', top: 8, left: 14, right: 14, zIndex: 10 }}>
         <SearchBar query={query} setQuery={setQuery} onSubmit={runFreeText} onClear={clearSearch}
           hasResults={results.length > 0} />
@@ -991,10 +1334,16 @@ function RealMapScreen() {
         {status && <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)',
           background: 'var(--card)', borderRadius: t.radiusSm, padding: '5px 10px', display: 'inline-block', boxShadow: 'var(--shadow)' }}>{status}</div>}
       </div>
+      )}
 
-      {/* results bottom sheet */}
-      {(results.length > 0 || (kind === 'walk-options' && walkOptions && walkOptions.length)) && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 10, background: 'var(--card)',
+      {/* Local favorite tab — the "streets locals love" thread, reimplemented
+          natively (see LocalFavoriteView). It sits over the search map and stops
+          above the bottom tab bar. */}
+      {tab === 'locals' && <LocalFavoriteView />}
+
+      {/* results bottom sheet — Search tab only, resting on top of the tab bar */}
+      {tab === 'search' && (results.length > 0 || (kind === 'walk-options' && walkOptions && walkOptions.length)) && (
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: MAP_TAB_H, zIndex: 10, background: 'var(--card)',
           borderTopLeftRadius: t.radius + 4, borderTopRightRadius: t.radius + 4, borderTop: '1px solid var(--line)',
           boxShadow: '0 -18px 50px -28px rgba(0,0,0,0.5)', maxHeight: '58%', display: 'flex', flexDirection: 'column',
           transform: sheetOpen ? 'none' : 'translateY(calc(100% - 58px))', transition: `transform .42s ${ease}` }}>
@@ -1045,7 +1394,16 @@ function RealMapScreen() {
               </button>
             )}
 
-            {kind === 'walk-options'
+            {/* VIBE view: no street list — the matched streets live on the map as
+                the heat cloud, and tapping one opens its popup. We keep the header
+                count + the "Make a walk" button above, and swap the list for a hint. */}
+            {kind === 'vibe' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px 2px',
+                fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
+                <span style={{ fontSize: 15, lineHeight: 1 }}>👆</span>
+                <span>Tap a highlighted street on the map to see its name and details.</span>
+              </div>
+            ) : kind === 'walk-options'
               ? walkOptions.map((o, i) => (
                   <button key={'opt' + i} onClick={() => chooseWalk(o, i)}
                     style={{ display: 'flex', alignItems: 'center', gap: 11, textAlign: 'left', cursor: 'pointer', width: '100%',
@@ -1078,6 +1436,9 @@ function RealMapScreen() {
           </div>
         </div>
       )}
+
+      {/* bottom navigation — Search / Local favorite */}
+      <MapTabBar tab={tab} setTab={setTab} />
     </div>
   );
 }

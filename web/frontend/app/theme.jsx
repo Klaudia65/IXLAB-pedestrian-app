@@ -162,8 +162,78 @@ const prefersReduced = () => window.matchMedia && window.matchMedia('(prefers-re
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const lerp = (a, b, t) => a + (b - a) * t;
 
+/* ---- geometry → mini-map thumbnail ----
+   Turn a GeoJSON geometry into a small set of [x, y] points inside a padded
+   0..100 box (y flipped so geographic north points up), used to draw a favorite
+   street's real shape as a card thumbnail. */
+function geomSegments(geom) {
+  if (!geom) return [];
+  if (geom.type === 'LineString') return [geom.coordinates];
+  if (geom.type === 'MultiLineString') return geom.coordinates;
+  if (geom.type === 'Polygon') return geom.coordinates;
+  if (geom.type === 'MultiPolygon') return geom.coordinates.flat();
+  if (geom.type === 'Point') return [[geom.coordinates]];
+  return [];
+}
+function geomToThumb(geom, maxPts = 24) {
+  const segs = geomSegments(geom);
+  if (!segs.length) return [];
+  // pick the longest single segment for a clean, un-jumped line
+  let coords = segs.reduce((a, s) => (s.length > a.length ? s : a), []);
+  if (coords.length < 2) coords = segs.flat();
+  if (coords.length < 2) return [];
+  const xs = coords.map(c => c[0]), ys = coords.map(c => c[1]);
+  const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
+  const w = (maxx - minx) || 1e-9, h = (maxy - miny) || 1e-9, sc = Math.max(w, h);
+  const pad = 12, span = 100 - 2 * pad, ox = (sc - w) / 2, oy = (sc - h) / 2;
+  let pts = coords.map(([x, y]) => [
+    +(pad + ((x - minx) + ox) / sc * span).toFixed(1),
+    +(pad + ((maxy - y) + oy) / sc * span).toFixed(1),
+  ]);
+  if (pts.length > maxPts) {                       // downsample so the stored favorite stays small
+    const step = (pts.length - 1) / (maxPts - 1);
+    pts = Array.from({ length: maxPts }, (_, i) => pts[Math.round(i * step)]);
+  }
+  return pts;
+}
+
+/* ---- favorites store ----
+   Persisted in localStorage and shared across screens: the map writes, the
+   profile reads. A custom event keeps any mounted screen live-synced. Each
+   favorite = { name, sub, points, kind }. */
+const FAV_KEY = 'seoulwalk.favorites';
+const FAV_EVENT = 'seoulwalk:favorites';
+function getFavorites() {
+  try { const s = localStorage.getItem(FAV_KEY); return s ? JSON.parse(s) : []; } catch (e) { return []; }
+}
+function writeFavorites(list) {
+  try { localStorage.setItem(FAV_KEY, JSON.stringify(list)); } catch (e) {}
+  try { window.dispatchEvent(new CustomEvent(FAV_EVENT)); } catch (e) {}
+}
+function isFavorite(name) { return getFavorites().some(f => f.name === name); }
+// Add (newest first) or remove a favorite, keyed by name. Returns true if now saved.
+function toggleFavorite(fav) {
+  const list = getFavorites();
+  const i = list.findIndex(f => f.name === fav.name);
+  if (i >= 0) list.splice(i, 1); else list.unshift(fav);
+  writeFavorites(list);
+  return i < 0;
+}
+// Live-synced favorites list for a component.
+function useFavorites() {
+  const [list, setList] = React.useState(getFavorites);
+  React.useEffect(() => {
+    const sync = () => setList(getFavorites());
+    window.addEventListener(FAV_EVENT, sync);
+    window.addEventListener('storage', sync);   // sync across tabs too
+    return () => { window.removeEventListener(FAV_EVENT, sync); window.removeEventListener('storage', sync); };
+  }, []);
+  return list;
+}
+
 Object.assign(window, {
   THEMES, THEME_ORDER, HERO_PHOTO, SWIPE_CARDS, VIBE_AXES,
   MAP_ZONE, MAP_SPOTS, HIDDEN_PATH, FAMOUS_PATH, RECO_PATH, MAP_MODES, PEOPLE, SOCIAL, GROUP_AXES, GROUP_FLAGS,
   usePersist, prefersReduced, clamp, lerp,
+  geomToThumb, getFavorites, isFavorite, toggleFavorite, useFavorites,
 });
