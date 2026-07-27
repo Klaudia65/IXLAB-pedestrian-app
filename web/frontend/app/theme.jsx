@@ -81,10 +81,9 @@ const VIBE_AXES = [
   { id: 'era', left: 'Historic', right: 'Contemporary', def: 0.32 },
   { id: 'finish', left: 'Raw / organic', right: 'Polished', def: 0.40 },
   { id: 'origin', left: 'Local / indie', right: 'Chain', def: 0.18 },
-  { id: 'price', left: 'Affordable', right: 'Expensive', def: 0.38 },
   { id: 'crowd', left: 'Touristy', right: 'Local', def: 0.62 },
   { id: 'energy', left: 'Quiet', right: 'Lively', def: 0.58 },
-  { id: 'green', left: 'Less green', right: 'Greenery', def: 0.66 },
+  { id: 'green', left: 'Greenery', right: 'Park', def: 0.66 },
 ];
 
 // 2 — map. coords are % of the map viewport.
