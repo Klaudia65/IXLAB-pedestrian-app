@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8752", "--bind", "127.0.0.1", "--directory", "web/frontend"],
       "port": 8752
+    },
+    {
+      "name": "prototype-verify",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["web/frontend/serve.py", "8757"],
+      "port": 8757
     }
   ]
 }

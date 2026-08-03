@@ -1,0 +1,204 @@
+-- ============================================================================
+-- Study / telemetry schema for the user study.
+--
+-- This is SEPARATE from init.sql: init.sql holds the read-only *reference* data
+-- (streets, scores, commerces...) that is identical for every participant, while
+-- this file holds the *write* side -- everything a participant produces while
+-- using the app, so we can analyse behaviour afterwards.
+--
+-- Design principles:
+--   * Everything hangs off a `session` (one "a person uses the app once"), so
+--     the whole trail of a run is reachable from a single session id.
+--   * Append-only: we never overwrite. `slider_change` in particular logs EVERY
+--     change (not just the final value), which is what lets us see whether the
+--     app adapts to changing needs during a walk.
+--   * Pseudonymous: a participant is a `code` (e.g. 'P07'); the code<->real
+--     identity mapping is kept offline by the researcher, never in this DB.
+--   * GPS is stored as a real PostGIS POINT (not two floats) so the trace can be
+--     spatially joined against osm_network -- e.g. "did they walk NEW streets?".
+--
+-- Codes are assigned by hand: the participant types their code at app launch.
+-- ============================================================================
+
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- WHO ------------------------------------------------------------------------
+
+-- One row per study participant. `code` is the hand-assigned pseudonym typed at
+-- launch; no real name or contact info is ever stored here.
+CREATE TABLE IF NOT EXISTS participant (
+    id          SERIAL PRIMARY KEY,
+    code        VARCHAR(20) UNIQUE NOT NULL,   -- e.g. 'P07', assigned by the researcher
+    condition   VARCHAR(10),                   -- planned study arm: 'solo' | 'friends' (nullable)
+    consent_at  TIMESTAMPTZ,                   -- when the participant accepted the consent screen
+    user_agent  TEXT,                          -- device/browser string, for debugging field issues
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- A group of friends walking together (only used for the "friends" condition).
+-- `code` is a short join code so several phones can attach to the same group.
+CREATE TABLE IF NOT EXISTS study_group (
+    id          SERIAL PRIMARY KEY,
+    code        VARCHAR(20) UNIQUE NOT NULL,   -- e.g. 'JOIN-7X'
+    label       VARCHAR(80),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Which participants belong to which group.
+CREATE TABLE IF NOT EXISTS group_member (
+    group_id        INTEGER NOT NULL REFERENCES study_group(id) ON DELETE CASCADE,
+    participant_id  INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    joined_at       TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (group_id, participant_id)
+);
+
+-- ONE USE --------------------------------------------------------------------
+
+-- One row per "the participant opens and uses the app once". Everything below
+-- references a session, so the full trail of a run is reachable from session.id.
+CREATE TABLE IF NOT EXISTS session (
+    id              SERIAL PRIMARY KEY,
+    participant_id  INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    group_id        INTEGER REFERENCES study_group(id) ON DELETE SET NULL,
+    mode            VARCHAR(10) NOT NULL DEFAULT 'solo',  -- 'solo' | 'friends'
+    app_version     VARCHAR(40),                          -- git sha / build tag, to tie data to a build
+    started_at      TIMESTAMPTZ DEFAULT NOW(),
+    ended_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_session_participant ON session (participant_id);
+CREATE INDEX IF NOT EXISTS idx_session_group ON session (group_id);
+
+-- ONBOARDING & PROFILE -------------------------------------------------------
+
+-- One forced-choice answer during onboarding (the "this or that" swipe).
+-- axis is one of the 6 slider axes (touristy_local, historic_contemporary,
+-- raw_polished, quiet_lively, local_chain, park); card ids are the swipe photo
+-- ids (e.g. 'c150057362' Commons / 'm1778...' Mapillary).
+CREATE TABLE IF NOT EXISTS onboarding_choice (
+    id              SERIAL PRIMARY KEY,
+    session_id      INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    axis            VARCHAR(30) NOT NULL,
+    left_card_id    VARCHAR(40),
+    right_card_id   VARCHAR(40),
+    chosen_side     VARCHAR(5),                 -- 'left' | 'right'
+    chosen_card_id  VARCHAR(40),
+    ts              TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_choice_session ON onboarding_choice (session_id);
+
+-- Append-only log of every slider move. Keeping ALL moves (not just the final
+-- value) is what answers "does the app adapt to changing needs?" -- we can see a
+-- participant re-tune their preferences mid-walk.
+CREATE TABLE IF NOT EXISTS slider_change (
+    id          SERIAL PRIMARY KEY,
+    session_id  INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    axis        VARCHAR(30) NOT NULL,
+    value       DOUBLE PRECISION NOT NULL,      -- the axis value after this move
+    ts          TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_slider_change_session ON slider_change (session_id);
+
+-- The computed preference profile at a moment in time (the 6-axis vector). Stored
+-- as JSONB so adding/removing an axis needs no schema change. `source` says what
+-- produced it: end of onboarding, a manual slider edit, or a route request.
+CREATE TABLE IF NOT EXISTS profile_snapshot (
+    id          SERIAL PRIMARY KEY,
+    session_id  INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    source      VARCHAR(20) NOT NULL,           -- 'onboarding' | 'edit' | 'route'
+    vector      JSONB NOT NULL,                 -- {"quiet_lively": 0.4, ...}
+    ts          TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_profile_snapshot_session ON profile_snapshot (session_id);
+
+-- ROUTES ---------------------------------------------------------------------
+
+-- A route the app proposed to the participant. We keep the profile + params that
+-- produced it (so a recommendation is reproducible) and the geometry itself.
+-- route_type lets us contrast the "fastest" vs the "enjoyable" proposal.
+CREATE TABLE IF NOT EXISTS recommended_route (
+    id          SERIAL PRIMARY KEY,
+    session_id  INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    route_type  VARCHAR(20),                    -- 'fastest' | 'enjoyable' | ...
+    profile     JSONB,                          -- preference vector used to build it
+    params      JSONB,                          -- start point, duration target, etc.
+    geom        GEOMETRY(LINESTRING, 4326),     -- the proposed path
+    length_m    DOUBLE PRECISION,
+    est_min     DOUBLE PRECISION,               -- estimated walking time
+    ts          TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_recommended_route_session ON recommended_route (session_id);
+CREATE INDEX IF NOT EXISTS idx_recommended_route_geom_gist ON recommended_route USING GIST (geom);
+
+-- Which proposed route the participant actually chose (answers fastest vs
+-- enjoyable at the behaviour level).
+CREATE TABLE IF NOT EXISTS route_choice (
+    id                    SERIAL PRIMARY KEY,
+    session_id            INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    recommended_route_id  INTEGER NOT NULL REFERENCES recommended_route(id) ON DELETE CASCADE,
+    ts                    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_route_choice_session ON route_choice (session_id);
+
+-- GPS TRACE ------------------------------------------------------------------
+
+-- One GPS fix. High volume (many rows per session) -> BIGSERIAL and a compact
+-- shape. Stored as a PostGIS POINT so the trace can be spatially joined against
+-- osm_network / segment_scores ("did they walk new / high-scoring streets?").
+-- `ts` is the device fix time, not the insert time.
+CREATE TABLE IF NOT EXISTS gps_point (
+    id          BIGSERIAL PRIMARY KEY,
+    session_id  INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    ts          TIMESTAMPTZ NOT NULL,
+    geom        GEOMETRY(POINT, 4326) NOT NULL,
+    accuracy_m  DOUBLE PRECISION,               -- reported horizontal accuracy
+    speed       DOUBLE PRECISION,               -- m/s, if the device reports it
+    heading     DOUBLE PRECISION                -- degrees, if the device reports it
+);
+CREATE INDEX IF NOT EXISTS idx_gps_point_session_ts ON gps_point (session_id, ts);
+CREATE INDEX IF NOT EXISTS idx_gps_point_geom_gist ON gps_point USING GIST (geom);
+
+-- SEARCH & SOCIAL ------------------------------------------------------------
+
+-- One search-bar query. Enables the "food searched 3x" detection and, later, the
+-- real-time feature that surfaces a friend's repeated search on the other screen.
+CREATE TABLE IF NOT EXISTS search_event (
+    id              SERIAL PRIMARY KEY,
+    session_id      INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    participant_id  INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    query           TEXT NOT NULL,
+    kind            VARCHAR(12),                -- 'vibe' | 'function' | 'place'
+    ts              TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_search_event_session ON search_event (session_id);
+CREATE INDEX IF NOT EXISTS idx_search_event_query ON search_event (query);
+
+-- A street a participant shared as a favourite with their group. "How often is
+-- this used" is just a COUNT over this table per group / per session.
+CREATE TABLE IF NOT EXISTS shared_favorite (
+    id              SERIAL PRIMARY KEY,
+    session_id      INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    participant_id  INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    group_id        INTEGER REFERENCES study_group(id) ON DELETE SET NULL,
+    street_name     VARCHAR(255),
+    edge_id         VARCHAR(80),                -- osm_network edge, when known
+    note            TEXT,
+    ts              TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shared_favorite_group ON shared_favorite (group_id);
+CREATE INDEX IF NOT EXISTS idx_shared_favorite_session ON shared_favorite (session_id);
+
+-- CATCH-ALL ------------------------------------------------------------------
+
+-- Generic event log for anything not worth its own table (screen views, button
+-- taps, feature usage). `payload` is free-form JSONB so new events need no schema
+-- change. Keep event_type values to a small documented vocabulary.
+CREATE TABLE IF NOT EXISTS app_event (
+    id              BIGSERIAL PRIMARY KEY,
+    session_id      INTEGER REFERENCES session(id) ON DELETE CASCADE,
+    participant_id  INTEGER REFERENCES participant(id) ON DELETE CASCADE,
+    event_type      VARCHAR(60) NOT NULL,       -- e.g. 'screen_view', 'search_focus'
+    payload         JSONB,
+    ts              TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_app_event_session ON app_event (session_id);
+CREATE INDEX IF NOT EXISTS idx_app_event_type ON app_event (event_type);

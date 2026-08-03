@@ -2,7 +2,10 @@
    APP — routing, theme context, onboarding chrome, transitions
    ============================================================ */
 
-const ONBOARDING = ['swipe', 'sliders'];
+// Swipe is now merged into the Landing screen, so the only remaining onboarding
+// chrome (tab row + skip) would be for a single step — drop it. Landing → Sliders
+// → Map is driven by each screen's own CTA plus the global burger / side dock.
+const ONBOARDING = [];
 
 function OnboardingChrome({ screen, go, children }) {
   const t = React.useContext(ThemeCtx);
@@ -34,29 +37,40 @@ function App() {
   const theme = THEMES[themeId] || THEMES.wander;
   const go = id => setScreen(id);
 
+  // On a real phone the desktop "mockup + side dock" layout doesn't fit, so we
+  // switch to a full-bleed mobile web app: the DeviceFrame fills the viewport,
+  // the Dock is replaced by a top-bar burger + slide-in navigation drawer.
+  const bare = useMediaQuery('(max-width: 760px)');
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+
   const screens = {
     landing: <LandingScreen go={go} />,
-    swipe: <SwipeScreen go={go} />,
+    curate: <CurateScreen go={go} />,
     sliders: <SlidersScreen go={go} />,
     map2: <RealMapScreen />,
     social: <SocialScreen go={go} />,
     group: <GroupScreen go={go} />,
     profile: <ProfileScreen go={go} />,
   };
-  const isOnboard = ONBOARDING.includes(screen);
+  // guard against a stale persisted screen id (e.g. the removed 'swipe')
+  const activeScreen = screens[screen] ? screen : 'landing';
+  const isOnboard = ONBOARDING.includes(activeScreen);
 
   return (
     <ThemeCtx.Provider value={theme}>
       <div style={{ minHeight: '100vh', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: 54, padding: 40, boxSizing: 'border-box', background: 'radial-gradient(120% 120% at 50% 0%, #F0FAFA 0%, #DFF1F1 68%, #CDE9E9 100%)' }}>
-        <Dock screen={screen} setScreen={setScreen} themeId={themeId} setThemeId={setThemeId} />
-        <DeviceFrame theme={theme}>
-          <StatusBar />
-          <div key={screen + themeId} className="screen-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        gap: bare ? 0 : 54, padding: bare ? 0 : 40, boxSizing: 'border-box',
+        background: 'radial-gradient(120% 120% at 50% 0%, #F0FAFA 0%, #DFF1F1 68%, #CDE9E9 100%)' }}>
+        {!bare && <Dock screen={activeScreen} setScreen={setScreen} themeId={themeId} setThemeId={setThemeId} />}
+        <DeviceFrame theme={theme} bare={bare}>
+          {bare ? <AppBar screen={activeScreen} onMenu={() => setDrawerOpen(true)} /> : <StatusBar />}
+          <div key={activeScreen + themeId} className="screen-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             {isOnboard
-              ? <OnboardingChrome screen={screen} go={go}>{screens[screen]}</OnboardingChrome>
-              : screens[screen]}
+              ? <OnboardingChrome screen={activeScreen} go={go}>{screens[activeScreen]}</OnboardingChrome>
+              : screens[activeScreen]}
           </div>
+          {bare && <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} screen={activeScreen}
+            go={(id) => { setScreen(id); setDrawerOpen(false); }} />}
         </DeviceFrame>
       </div>
     </ThemeCtx.Provider>

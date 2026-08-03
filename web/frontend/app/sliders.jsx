@@ -47,8 +47,10 @@ function SlidersScreen({ go }) {
   const [off, setOff] = usePersist('sliders.off', []);          // axis ids the user dropped
 
   const isOff = id => off.includes(id);
-  const activeAxes = VIBE_AXES.filter(a => !isOff(a.id));
-  const mutedAxes = VIBE_AXES.filter(a => isOff(a.id));
+  // greenery is chosen on the map with its own two-button control (Leafy street /
+  // Park), not as a bipolar slider — so it isn't listed here.
+  const activeAxes = VIBE_AXES.filter(a => a.id !== 'green' && !isOff(a.id));
+  const mutedAxes = VIBE_AXES.filter(a => a.id !== 'green' && isOff(a.id));
   const set = (id, v) => setVals(o => ({ ...o, [id]: v }));
 
   function dropAxis(id) { setOff(o => o.includes(id) ? o : [...o, id]); }

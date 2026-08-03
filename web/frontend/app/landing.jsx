@@ -1,92 +1,46 @@
 /* ============================================================
-   0 — LANDING / INVITATION
-   Not a login wall. An invitation into spontaneous urban
-   discovery. The three social modes (solo / couple / friends)
-   ARE the start flow — picking one chooses how you head out,
-   each with its own personality:
-     solo   = calm, contemplative   (cobalt)
-     couple = warm, romantic        (iris)
-     group  = lively, social        (orchid)
+   0 — LANDING (merged with the old 1A swipe deck)
+   One invitation screen: pick how you're heading out (solo or
+   with friends) AND start teaching your taste by swiping streets
+   — no separate onboarding step. "Set your vibe →" jumps to the
+   sliders at any point.
+
+   The swipe deck reuses Card / CircleBtn (defined in swipe.jsx)
+   and the SWIPE_CARDS data, so the interaction is identical to
+   the old standalone screen — just hosted here with a compact
+   header + mode toggle above it.
    ============================================================ */
 
-// the three social modes, as landing content. order = solo → couple → group,
-// cool → warm hue, calm → lively personality. ids match SOCIAL / social.mode.
-const LANDING_MODES = [
-  { id: 'solo', title: 'On my own', mood: 'calm', dots: 1,
-    blurb: 'A contemplative wander, paced and routed just for you.',
-    hue: 'var(--a3)', glow: 'rgba(68,86,255,0.40)' },
-  { id: 'couple', title: 'The two of us', mood: 'romantic', dots: 2,
-    blurb: 'Two tastes blended into one route — quiet corners you’ll both love.',
-    hue: 'var(--a4)', glow: 'rgba(138,91,255,0.40)' },
-  { id: 'group', title: 'With friends', mood: 'lively', dots: 3,
-    blurb: 'A buzzing outing on the streets your whole crew agrees on.',
-    hue: 'var(--a1)', glow: 'rgba(210,56,235,0.40)' },
-];
-
-// person glyph — a tiny figure; clusters of 1/2/3 give each mode its crowd
-function PersonGlyph({ size = 22, color = 'currentColor', style }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={style}>
-      <circle cx="12" cy="7.5" r="4.1" />
-      <path d="M3.5 21c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5z" />
-    </svg>
-  );
-}
-
-// the tinted swatch on each card — its crowd of people, in the mode's hue
-function ModeCrowd({ mode, hue, glow }) {
-  const n = mode.dots;
-  const offs = n === 1 ? [0] : n === 2 ? [-9, 9] : [-15, 0, 15];
-  const sizes = n === 1 ? [30] : n === 2 ? [25, 25] : [21, 25, 21];
-  const ops = n === 1 ? [1] : n === 2 ? [0.78, 1] : [0.64, 1, 0.82];
-  return (
-    <div style={{ width: 58, height: 58, borderRadius: 16, flex: '0 0 auto', position: 'relative',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: `color-mix(in srgb, ${hue} 16%, var(--card))`,
-      boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${hue} 30%, transparent)` }}>
-      <div style={{ position: 'relative', width: 50, height: 30 }}>
-        {offs.map((dx, i) => (
-          <PersonGlyph key={i} size={sizes[i]} color={hue}
-            style={{ position: 'absolute', left: '50%', bottom: 0,
-              transform: `translateX(calc(-50% + ${dx}px))`, opacity: ops[i],
-              filter: i === Math.floor(n / 2) ? `drop-shadow(0 1px 5px ${glow})` : 'none' }} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ModeCard({ mode, selected, onSelect }) {
+// One side of a forced-choice pair: a tappable photo with its pole label. Photo
+// fills the card (object-fit: cover) so there are no letterbox bars; the stacked
+// full-width layout keeps the crop gentle.
+function PairChoice({ card, pole, onPick }) {
   const t = React.useContext(ThemeCtx);
   const [press, setPress] = React.useState(false);
   return (
-    <button onClick={() => onSelect(mode.id)}
-      onPointerDown={() => setPress(true)} onPointerUp={() => setPress(false)} onPointerLeave={() => setPress(false)}
-      style={{ display: 'flex', alignItems: 'center', gap: 14, width: '100%', textAlign: 'left',
-        padding: '13px 15px', cursor: 'pointer', borderRadius: t.radius, fontFamily: t.fontUI,
-        background: selected ? `color-mix(in srgb, ${mode.hue} 9%, var(--card))` : 'var(--card)',
-        border: selected ? `1.5px solid ${mode.hue}` : '1.5px solid var(--line)',
-        boxShadow: selected ? `0 6px 22px -10px ${mode.glow}` : 'var(--shadow)',
-        transform: press ? 'scale(0.99)' : 'none',
-        transition: 'transform .12s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease' }}>
-      <ModeCrowd mode={mode} hue={mode.hue} glow={mode.glow} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, letterSpacing: t.headTrack,
-            fontSize: 17.5, color: 'var(--ink)' }}>{mode.title}</span>
-          <span style={{ fontFamily: t.fontMono, fontSize: 9.5, letterSpacing: '0.16em', textTransform: 'uppercase',
-            color: mode.hue, fontWeight: 700 }}>{mode.mood}</span>
-        </div>
-        <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.38, marginTop: 3 }}>{mode.blurb}</div>
-      </div>
-      {/* selection check */}
-      <div style={{ width: 22, height: 22, borderRadius: '50%', flex: '0 0 auto',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: selected ? mode.hue : 'transparent',
-        border: selected ? 'none' : '1.5px solid var(--line-strong)',
-        transition: 'background .2s ease' }}>
-        {selected && (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+    <button onClick={onPick} onPointerDown={() => setPress(true)}
+      onPointerUp={() => setPress(false)} onPointerLeave={() => setPress(false)}
+      style={{ flex: 1, minWidth: 0, minHeight: 0, position: 'relative', borderRadius: t.radius, overflow: 'hidden',
+        border: '1px solid var(--line)', background: 'var(--card)', boxShadow: 'var(--shadow)', cursor: 'pointer',
+        padding: 0, display: 'block', textAlign: 'left',
+        transform: press ? 'scale(0.985)' : 'none', transition: 'transform .12s ease' }}>
+      {/* photo fills the card */}
+      <img src={card.src} alt={card.place} draggable={false}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      {/* legibility scrims at top (chip) and bottom (name) */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 54, background: 'linear-gradient(180deg, rgba(0,0,0,0.5), rgba(0,0,0,0))', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 46, background: 'linear-gradient(0deg, rgba(0,0,0,0.6), rgba(0,0,0,0))', pointerEvents: 'none' }} />
+      {/* pole label chip */}
+      <div style={{ position: 'absolute', top: 9, left: 9, background: 'var(--accent)', color: 'var(--accent-ink)',
+        fontFamily: t.fontMono, fontWeight: 800, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase',
+        padding: '4px 9px', borderRadius: t.radiusPill }}>{pole}</div>
+      {/* street name + credit */}
+      <div style={{ position: 'absolute', left: 11, right: 11, bottom: 8 }}>
+        <div style={{ color: '#fff', fontSize: 12.5, fontWeight: 700, textShadow: '0 1px 8px rgba(0,0,0,0.7)',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.place}</div>
+        {card.credit && (
+          <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 9.5, textShadow: '0 1px 6px rgba(0,0,0,0.7)',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.credit}</div>
         )}
       </div>
     </button>
@@ -95,45 +49,137 @@ function ModeCard({ mode, selected, onSelect }) {
 
 function LandingScreen({ go }) {
   const t = React.useContext(ThemeCtx);
-  const [sel, setSel] = usePersist('social.mode', 'solo');
-  const cur = LANDING_MODES.find(m => m.id === sel) || LANDING_MODES[0];
+
+  // ---- forced-choice onboarding: one "this or that" per axis ----
+  // Photos come from resolveSwipePairs (auto defaults, or the user's curation
+  // override); recomputed on mount so returning from the curation screen shows the
+  // freshly picked photos.
+  const pairs = React.useMemo(() => resolveSwipePairs(), []);
+  const [idx, setIdx] = usePersist('pairs.idx', 0);
+  const [choices, setChoices] = usePersist('pairs.choices', {});   // { axisKey: 'left'|'right'|'skip' }
+  const total = pairs.length;
+  const done = idx >= total;
+  const answered = Object.values(choices).filter(c => c === 'left' || c === 'right').length;
+  const pair = pairs[idx];
+
+  function pick(choice) {
+    if (!pair) return;
+    const next = { ...choices, [pair.axis]: choice };
+    setChoices(next);
+    commitPairsProfile(next);                 // rebuild the base profile (sliders + chips) live
+    setIdx(i => i + 1);
+  }
+  function undo() {
+    if (idx === 0) return;
+    const prev = pairs[idx - 1];
+    const next = { ...choices }; if (prev) delete next[prev.axis];
+    setChoices(next);
+    commitPairsProfile(next);
+    setIdx(i => i - 1);
+  }
+  function restart() { setIdx(0); setChoices({}); commitPairsProfile({}); }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '4px 22px 18px', minHeight: 0 }}>
-      {/* brand */}
-      <div style={{ flex: '0 0 auto' }}>
-        <Label>Seoul · pedestrian exploration</Label>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '4px 20px 16px', minHeight: 0 }}>
+      {/* compact header — wordmark + jump-ahead link */}
+      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ display: 'inline-flex', alignItems: 'baseline', fontFamily: t.fontHead,
-          fontSize: 40, fontWeight: t.headWeight, letterSpacing: '-0.03em', lineHeight: 1, color: 'var(--ink)', marginTop: 10 }}>
+          fontSize: 30, fontWeight: t.headWeight, letterSpacing: '-0.03em', lineHeight: 1, color: 'var(--ink)' }}>
           explore
-          <span style={{ width: 11, height: 11, borderRadius: 999, background: 'var(--accent)', marginLeft: 4,
-            alignSelf: 'flex-end', marginBottom: 6, boxShadow: '0 0 16px var(--dot-glow)' }} />
+          <span style={{ width: 9, height: 9, borderRadius: 999, background: 'var(--accent)', marginLeft: 3,
+            alignSelf: 'flex-end', marginBottom: 5, boxShadow: '0 0 14px var(--dot-glow)' }} />
         </div>
-        <div style={{ fontFamily: t.fontHead, fontSize: 18, fontWeight: 500, letterSpacing: '-0.01em',
-          color: 'var(--ink-soft)', lineHeight: 1.32, marginTop: 12 }}>
-          Every walk,<br />a new story.
-        </div>
+        <button onClick={() => go('sliders')}
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: t.fontUI,
+            fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', padding: '4px 0', whiteSpace: 'nowrap' }}>
+          Set your vibe →
+        </button>
       </div>
 
-      {/* mode cards */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 11, margin: '4px 0' }}>
-        <Label style={{ marginBottom: 1 }}>How are you heading out?</Label>
-        {LANDING_MODES.map(m => (
-          <ModeCard key={m.id} mode={m} selected={m.id === sel} onSelect={setSel} />
-        ))}
-      </div>
-
-      {/* how it works + CTA */}
-      <div style={{ flex: '0 0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, justifyContent: 'center', marginBottom: 12 }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-faint)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z" /><path d="M9 21h6M10 17v4M14 17v4" /></svg>
-          <span style={{ fontSize: 12, color: 'var(--ink-faint)', lineHeight: 1.4, textAlign: 'center' }}>
-            Tell us what you love — we'll show you where to go.
+      {/* short intro + a nudge that walks can be shared with friends */}
+      <div style={{ flex: '0 0 auto', marginTop: 10 }}>
+        <div style={{ fontFamily: t.fontHead, fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em',
+          color: 'var(--ink-soft)', lineHeight: 1.3 }}>
+          Every walk, a new story.
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 8 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto', marginTop: 1 }}>
+            <circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0" />
+            <path d="M16 5.2a3.2 3.2 0 0 1 0 6" /><path d="M17.5 14.4A5.5 5.5 0 0 1 20.5 20" />
+          </svg>
+          <span style={{ fontSize: 12, color: 'var(--ink-faint)', lineHeight: 1.45 }}>
+            Walking with others? You can <b style={{ color: 'var(--ink-soft)' }}>add friends</b> and blend everyone's taste into one route.
           </span>
         </div>
-        <PrimaryBtn onClick={() => go('swipe')} style={{ background: cur.hue, boxShadow: `0 8px 24px -10px ${cur.glow}` }}>
-          Start exploring{cur.id === 'solo' ? '' : cur.id === 'couple' ? ' together' : ' with friends'}
-        </PrimaryBtn>
+      </div>
+
+      {/* instruction + progress */}
+      <div style={{ flex: '0 0 auto', marginTop: 13, marginBottom: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7, gap: 10 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            Which street feels more like you?
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', whiteSpace: 'nowrap', flex: '0 0 auto' }}>{Math.min(idx + (done ? 0 : 1), total)} of {total}</span>
+        </div>
+        <div style={{ height: 5, borderRadius: 999, background: 'var(--line)', overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${(Math.min(idx, total) / total) * 100}%`, background: 'var(--accent)',
+            borderRadius: 999, transition: 'width .4s cubic-bezier(.22,1,.36,1)' }} />
+        </div>
+        <div style={{ textAlign: 'right', marginTop: 6 }}>
+          <button onClick={() => go('curate')}
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: t.fontUI,
+              fontSize: 11.5, fontWeight: 700, color: 'var(--ink-faint)', padding: 0 }}>
+            Pick the photos yourself →
+          </button>
+        </div>
+      </div>
+
+      {/* the choice */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+        {done ? (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14,
+            border: '1.5px dashed var(--line-strong)', borderRadius: t.radius, padding: 24 }}>
+            <div style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, fontSize: 24, color: 'var(--ink)' }}>Taste profile set</div>
+            <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.5, maxWidth: 250 }}>
+              You made {answered} of {total} calls. We set your vibe sliders and profile chips from them — tweak them next, or head to the map.
+            </div>
+            <div style={{ display: 'flex', gap: 9, marginTop: 4 }}>
+              <button onClick={restart} style={{ border: '1.5px solid var(--line-strong)', background: 'var(--card)', color: 'var(--ink)', borderRadius: 999, padding: '11px 18px', fontWeight: 600, fontSize: 13.5, cursor: 'pointer', fontFamily: t.fontUI }}>Start over</button>
+              <button onClick={() => go('sliders')} style={{ border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', borderRadius: 999, padding: '11px 18px', fontWeight: 700, fontSize: 13.5, cursor: 'pointer', fontFamily: t.fontUI }}>Set your vibe →</button>
+            </div>
+          </div>
+        ) : pair ? (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <PairChoice card={pair.left} pole={pair.neg} onPick={() => pick('left')} />
+              {/* "or" divider between the two full-width photos */}
+              <div style={{ flex: '0 0 auto', alignSelf: 'center', fontFamily: t.fontMono, fontSize: 11,
+                fontWeight: 800, color: 'var(--ink-faint)', letterSpacing: '0.1em' }}>— or —</div>
+              <PairChoice card={pair.right} pole={pair.pos} onPick={() => pick('right')} />
+            </div>
+            {/* no-preference + undo */}
+            <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              {idx > 0 && (
+                <button onClick={undo} title="Back" style={{ border: '1.5px solid var(--line)', background: 'var(--card)', color: 'var(--ink-soft)',
+                  borderRadius: 999, width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8h11a6 6 0 110 12H7"/><path d="M7 4L3 8l4 4"/></svg>
+                </button>
+              )}
+              <button onClick={() => pick('skip')}
+                style={{ border: '1.5px solid var(--line-strong)', background: 'var(--card)', color: 'var(--ink-soft)',
+                  borderRadius: 999, padding: '11px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: t.fontUI }}>
+                No preference
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--ink-faint)', fontSize: 13, textAlign: 'center', padding: 20 }}>
+            No comparison data — run backend/analysis/step0_7_build_swipe_deck.py.
+          </div>
+        )}
       </div>
     </div>
   );

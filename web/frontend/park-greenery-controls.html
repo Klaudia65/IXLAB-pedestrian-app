@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verdure — façons de la représenter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  /* WANDER design-system tokens (from app/theme.jsx) */
+  :root{
+    --paper:#DFF1F1; --paper-2:#CDE9E9; --card:#FFFFFF; --card-2:#EAF7F7;
+    --ink:#143229; --ink-soft:#255A4B; --ink-faint:#5E8A7C;
+    --line:rgba(37,90,75,0.16); --line-strong:rgba(37,90,75,0.28);
+    --accent:#4456FF; --accent-soft:#E3E6FF; --good:#34C38F; --mint:#A6FFE8; --lime:#C9FF46;
+    --shadow:0 4px 20px rgba(37,90,75,0.10);
+    --font:'Space Grotesk','Segoe UI',system-ui,sans-serif; --mono:'Space Mono','SF Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{background:var(--paper);font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
+    padding:26px 16px 60px;}
+  .wrap{max-width:440px;margin:0 auto;}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint);}
+  h1{font-weight:700;letter-spacing:-.02em;font-size:25px;line-height:1.1;margin:7px 0 6px;}
+  .lede{font-size:13.5px;color:var(--ink-soft);line-height:1.5;margin:0 0 22px;}
+  .lede b{color:var(--ink);}
+
+  .card{background:var(--card);border-radius:20px;box-shadow:var(--shadow);padding:18px 18px 16px;margin-bottom:16px;}
+  .card .vlabel{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+  .card .vlabel .name{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint);}
+  .ver{font-size:12px;font-weight:700;color:var(--accent);}
+  .drop{width:24px;height:24px;border-radius:50%;border:none;background:var(--card-2);color:var(--ink-faint);
+    cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;}
+
+  /* bipolar/unipolar track (app style) */
+  .poles{display:flex;justify-content:space-between;margin:8px 0 6px;font-size:13.5px;font-weight:600;}
+  .poles .on{color:var(--ink);} .poles .off{color:var(--ink-faint);}
+  .track{position:relative;height:40px;display:flex;align-items:center;cursor:pointer;touch-action:none;}
+  .track .rail{position:absolute;left:0;right:0;height:4px;border-radius:999px;background:var(--line);}
+  .track .fill{position:absolute;left:0;height:4px;border-radius:999px;}
+  .track .thumb{position:absolute;transform:translateX(-50%);width:26px;height:26px;border-radius:50%;
+    background:var(--card);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;}
+  .track .thumb i{width:8px;height:8px;border-radius:50%;display:block;}
+
+  /* segmented */
+  .seg{display:flex;gap:6px;margin:10px 0 4px;}
+  .seg button{flex:1;padding:9px 6px;border-radius:12px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-soft);font-family:var(--font);font-weight:600;font-size:12.5px;cursor:pointer;transition:.12s;}
+  .seg button.sel{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+  .result{margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--ink-soft);
+    display:flex;align-items:center;gap:8px;}
+  .result .chip{width:9px;height:9px;border-radius:50%;background:var(--good);}
+  .result .chip.park{border-radius:2px;width:16px;height:5px;background:#137a41;}
+  .cap{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-faint);line-height:1.45;}
+  .cap b{color:var(--ink-soft);}
+
+  /* dropped (off) state — the app's "not factored in" chip */
+  .offbox{display:flex;align-items:center;gap:10px;}
+  .addchip{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink-soft);font-weight:600;font-size:12.5px;cursor:pointer;font-family:var(--font);}
+  .addchip .plus{font-size:16px;line-height:1;color:var(--accent);}
+  .offnote{font-size:11.5px;color:var(--ink-faint);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Design system · Wander</div>
+  <h1>Verdure — 3 façons de la représenter</h1>
+  <p class="lede">Le problème du bipolaire « Greenery ↔ Park » : les deux bouts ne sont
+    pas des contraires, donc le centre n'a pas de sens de « peu importe ».
+    <b>Dans ton app, « peu importe » = retirer l'axe (✕)</b>, comme les autres — pas une
+    position. Voici la même logique, 3 habillages. Le ✕ met l'axe de côté ; touche
+    « + Verdure » pour le réactiver.</p>
+
+  <div id="v1" class="card"></div>
+  <div id="v2" class="card"></div>
+  <div id="v3" class="card"></div>
+</div>
+
+<script>
+// ---- live counts from the real data (fallback to static if fetch fails) ----
+let STREETS = [], WALKS = [];
+const lerp = (a,b,t)=>a+(b-a)*Math.max(0,Math.min(1,t));
+
+// green "amount" g in [0,1] → what we'd recommend (streets ramp up to parks)
+function greenResult(g){
+  if (g < 0.66){
+    const t = lerp(0.0, 0.8, g/0.66);
+    const n = STREETS.length ? STREETS.filter(f=>f.properties.park_v2>=t).length : Math.round(lerp(144,22,g/0.66));
+    return { kind:'street', n, word:`${n} rues arborées` };
+  }
+  const lean = (g-0.66)/0.34;
+  const n = Math.round(lerp(4, WALKS.length||17, lean));
+  return { kind:'park', n, word:`${n} balade${n>1?'s':''} en parc` };
+}
+const amountWord = g => g<0.3 ? 'Quelques arbres' : (g<0.66 ? 'Rue très verte' : 'Un parc');
+
+// ---- three versions, each an independent little controller ----
+const state = { v1:{off:false,g:0.35}, v2:{off:false,g:0.5}, v3:{off:false,step:1} };
+
+function resultLine(g){ const r=greenResult(g);
+  return `<div class="result"><span class="chip ${r.kind==='park'?'park':''}"></span>→ ${r.word}</div>`; }
+
+function offView(id, poles){
+  return `<div class="offbox">
+    <button class="addchip" onclick="reactivate('${id}')"><span class="plus">+</span>${poles}</button>
+    <span class="offnote">axe retiré — « peu importe »</span></div>`;
+}
+window.reactivate = id => { state[id].off=false; renderAll(); };
+window.dropAxis  = id => { state[id].off=true;  renderAll(); };
+
+// V1 — bipolar INTENSITY (closest to the app's existing slider)
+function renderV1(){
+  const s=state.v1, el=document.getElementById('v1');
+  if(s.off){ el.innerHTML = `<div class="vlabel"><span class="name">Verdure</span><span class="ver">V1 · bipolaire</span></div>${offView('v1','Rue arborée ↔ Parc')}`; return; }
+  const p=s.g*100;
+  el.innerHTML = `
+    <div class="vlabel"><span class="name">Verdure · <span class="ver">V1 bipolaire (comme l'app)</span></span>
+      <button class="drop" onclick="dropAxis('v1')" title="Peu importe">×</button></div>
+    <div class="poles"><span class="${s.g<0.5?'on':'off'}">Rue arborée</span><span class="${s.g>=0.5?'on':'off'}">Parc</span></div>
+    <div class="track" data-id="v1">
+      <div class="rail"></div>
+      <div class="fill" style="width:${p}%;background:var(--accent);opacity:.55"></div>
+      <div class="thumb" style="left:${p}%;border:2px solid var(--accent)"><i style="background:var(--accent)"></i></div>
+    </div>
+    ${resultLine(s.g)}
+    <div class="cap"><b>Le curseur = la dose de vert</b> (une rue arborée → un parc). Le centre = « bien vert ». « Peu importe » se fait avec le ✕ (comme les 5 autres axes) — jamais au milieu.</div>`;
+}
+// V2 — unipolar GREEN FILL (one direction, amount of green)
+function renderV2(){
+  const s=state.v2, el=document.getElementById('v2');
+  if(s.off){ el.innerHTML = `<div class="vlabel"><span class="name">Verdure</span><span class="ver">V2 · dose</span></div>${offView('v2','Verdure — un peu → un parc')}`; return; }
+  const p=s.g*100;
+  el.innerHTML = `
+    <div class="vlabel"><span class="name">Verdure · <span class="ver">V2 dose (unipolaire vert)</span></span>
+      <button class="drop" onclick="dropAxis('v2')" title="Peu importe">×</button></div>
+    <div class="poles"><span class="on" style="font-weight:700">${amountWord(s.g)}</span><span class="off" style="font-size:11px;font-family:var(--mono)">un peu → un parc</span></div>
+    <div class="track" data-id="v2">
+      <div class="rail"></div>
+      <div class="fill" style="width:${p}%;background:linear-gradient(90deg,#8ec66b,#137a41)"></div>
+      <div class="thumb" style="left:${p}%;border:2px solid #137a41"><i style="background:#137a41"></i></div>
+    </div>
+    ${resultLine(s.g)}
+    <div class="cap"><b>Une seule échelle de dose</b> : plus tu remplis, plus c'est vert. Pas de milieu ambigu — le milieu = « bien verte ». « Peu importe » = ✕.</div>`;
+}
+// V3 — segmented STEPS (no drag; mobile-friendly)
+const STEPS = [ {word:'Rue arborée', g:0.25}, {word:'Très verte', g:0.5}, {word:'Parc', g:0.9} ];
+function renderV3(){
+  const s=state.v3, el=document.getElementById('v3');
+  if(s.off){ el.innerHTML = `<div class="vlabel"><span class="name">Verdure</span><span class="ver">V3 · crans</span></div>${offView('v3','Verdure — arborée · verte · parc')}`; return; }
+  el.innerHTML = `
+    <div class="vlabel"><span class="name">Verdure · <span class="ver">V3 crans (segmenté)</span></span>
+      <button class="drop" onclick="dropAxis('v3')" title="Peu importe">×</button></div>
+    <div class="seg">${STEPS.map((st,i)=>`<button class="${i===s.step?'sel':''}" onclick="setStep(${i})">${st.word}</button>`).join('')}</div>
+    ${resultLine(STEPS[s.step].g)}
+    <div class="cap"><b>3 crans tappables</b>, pas de curseur — net sur mobile. « Peu importe » = ✕ (l'axe disparaît de la liste).</div>`;
+}
+window.setStep = i => { state.v3.step=i; renderV3(); };
+
+function renderAll(){ renderV1(); renderV2(); renderV3(); attachDrag(); }
+
+// drag handling for the two track-based versions
+function attachDrag(){
+  document.querySelectorAll('.track').forEach(tr=>{
+    const id = tr.dataset.id;
+    const setFrom = clientX => { const r=tr.getBoundingClientRect();
+      state[id].g = Math.max(0,Math.min(1,(clientX-r.left)/r.width)); (id==='v1'?renderV1:renderV2)(); attachDrag(); };
+    let drag=false;
+    tr.onpointerdown = e => { drag=true; try{tr.setPointerCapture(e.pointerId)}catch(x){} setFrom(e.clientX); };
+    tr.onpointermove = e => { if(drag) setFrom(e.clientX); };
+    tr.onpointerup = tr.onpointercancel = () => drag=false;
+  });
+}
+
+Promise.all([
+  fetch('park-v2-preview-jongno.geojson',{cache:'no-store'}).then(r=>r.json()).catch(()=>null),
+  fetch('nature-paths-jongno.geojson',{cache:'no-store'}).then(r=>r.json()).catch(()=>null),
+]).then(([s,w])=>{
+  if(s) STREETS = s.features.filter(f=>f.properties.is_street!==false);
+  if(w) WALKS = w.features.filter(f=>!['paid','private','review'].includes(f.properties.access_class));
+  renderAll();
+});
+renderAll();
+</script>
+</body>
+</html>

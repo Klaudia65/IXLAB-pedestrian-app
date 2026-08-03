@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, init_db, close_db
+from app.api.v1.routes import study
 
 
 @asynccontextmanager
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="IXLAB pedestrian API", lifespan=lifespan)
+
+# study telemetry: the write side of the API (session, gps, sliders, ...)
+app.include_router(study.router)
 
 # the web map is served from another origin (port 8731) -> allow cross-origin calls
 app.add_middleware(

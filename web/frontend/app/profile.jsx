@@ -15,13 +15,23 @@ function outingFor(friendCount) {
   return friendCount === 0 ? 'solo' : friendCount === 1 ? 'couple' : 'friends';
 }
 
-// preference chips detected for this walker
+// Fallback preference chips, used only if the swipe hasn't produced a profile yet.
 const PROFILE_PREFS = [
   { key: 'raw', label: 'raw' },
   { key: 'historic', label: 'historic' },
   { key: 'local', label: 'local' },
   { key: 'quiet', label: 'quiet' },
 ];
+
+// Chips the swipe detected for this walker (written by commitSwipeProfile as
+// profile.chips: ordered [{ key: axisKey, label, value }]). Null if not swiped yet.
+function readSwipeChips() {
+  try {
+    const v = localStorage.getItem('seoulwalk.profile.chips');
+    const a = v != null ? JSON.parse(v) : null;
+    return Array.isArray(a) && a.length ? a.map(c => ({ key: c.key, label: c.label })) : null;
+  } catch (e) { return null; }
+}
 
 // friends, with initials + a short relationship note
 const PROFILE_FRIENDS = [
@@ -144,20 +154,24 @@ function FriendCard({ f, on, accent, onClick }) {
 
 function ProfileScreen({ go }) {
   const t = React.useContext(ThemeCtx);
-  const [prefs, setPrefs] = usePersist('profile.prefs', { raw: true, historic: true, local: true, quiet: false });
+  // Prefs come from the swipe when available (else the fallback set). A chip is ON
+  // unless the user explicitly toggled it off, so newly detected chips show ON.
+  const detectedPrefs = React.useMemo(() => readSwipeChips() || PROFILE_PREFS, []);
+  const [prefs, setPrefs] = usePersist('profile.prefs', {});
   const [friends, setFriends] = usePersist('profile.friends', { NOA: true, TEO: false, SUMIN: true });
   const favorites = useFavorites();               // saved streets from the detailed map
   const pathsScroll = useDragScroll();
   const friendsScroll = useDragScroll();
 
-  const prefCount = Object.values(prefs).filter(Boolean).length;
+  const isPrefOn = k => prefs[k] !== false;
+  const prefCount = detectedPrefs.filter(p => isPrefOn(p.key)).length;
   const friendCount = Object.values(friends).filter(Boolean).length;
   const accent = OUTING_ACCENT[outingFor(friendCount)];
   const ctaMeta = friendCount === 0
     ? `Solo wander · ${prefCount} preferences`
     : `${friendCount} friend${friendCount > 1 ? 's' : ''} · ${prefCount} preferences`;
 
-  const togglePref = k => setPrefs({ ...prefs, [k]: !prefs[k] });
+  const togglePref = k => setPrefs({ ...prefs, [k]: !isPrefOn(k) });
   const toggleFriend = k => setFriends({ ...friends, [k]: !friends[k] });
 
   const iconBtn = {
@@ -210,11 +224,11 @@ function ProfileScreen({ go }) {
         <section style={{ padding: '22px 20px 0' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <h2 style={{ margin: 0, fontFamily: t.fontHead, fontSize: 20, fontWeight: 500, color: 'var(--ink)' }}>Preferences</h2>
-            <Label style={{ color: 'var(--ink-faint)' }}>{PROFILE_PREFS.length} detected · {prefCount} on</Label>
+            <Label style={{ color: 'var(--ink-faint)' }}>{detectedPrefs.length} detected · {prefCount} on</Label>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {PROFILE_PREFS.map(p => (
-              <PrefChip key={p.key} label={p.label} on={!!prefs[p.key]} accent={accent} onClick={() => togglePref(p.key)} />
+            {detectedPrefs.map(p => (
+              <PrefChip key={p.key} label={p.label} on={isPrefOn(p.key)} accent={accent} onClick={() => togglePref(p.key)} />
             ))}
           </div>
         </section>

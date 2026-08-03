@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Slider verdure — rue arborée → parc</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{ --font:'Segoe UI',system-ui,-apple-system,sans-serif; --ink:#1d2230; --ink-soft:#6b7280;
+         --line:#e6e6e2; --card:#ffffffee; --green:#1f8a4c; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;font-family:var(--font);color:var(--ink);}
+  #map{position:absolute;inset:0;}
+
+  .panel{position:absolute;top:14px;left:14px;z-index:5;width:300px;max-width:calc(100vw - 28px);
+    background:var(--card);backdrop-filter:blur(6px);border:1px solid var(--line);
+    border-radius:14px;padding:15px 16px;box-shadow:0 8px 30px rgba(20,25,45,.14);}
+  .panel h1{margin:0 0 2px;font-size:15px;}
+  .panel .sub{margin:0 0 14px;font-size:11.5px;color:var(--ink-soft);line-height:1.45;}
+
+  /* slider */
+  .slider-wrap{margin:4px 0 2px;}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:8px;border-radius:6px;
+    background:linear-gradient(90deg,#8ec66b 0%,#cfe0b8 42%,#ececE8 50%,#9ec584 58%,#0f6d3a 100%);outline:none;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;
+    background:#fff;border:3px solid var(--green);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25);}
+  input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#fff;
+    border:3px solid var(--green);cursor:pointer;}
+  .ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-soft);margin-top:6px;}
+  .ticks span{width:33%;} .ticks .mid{text-align:center;} .ticks .end{text-align:right;}
+
+  .mode{margin-top:13px;padding-top:12px;border-top:1px solid var(--line);}
+  .mode .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:20px;
+    background:#eef2ea;color:var(--green);margin-bottom:7px;}
+  .mode .tag.off{background:#f0f0ee;color:var(--ink-soft);}
+  .mode h2{margin:0 0 3px;font-size:13.5px;}
+  .mode p{margin:0;font-size:11px;color:var(--ink-soft);line-height:1.4;}
+
+  .reco{margin-top:11px;max-height:38vh;overflow:auto;}
+  .item{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #f0f0ec;font-size:12px;cursor:pointer;}
+  .item:first-child{border-top:none;}
+  .item .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none;}
+  .item .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .item .val{font-variant-numeric:tabular-nums;color:var(--ink-soft);font-size:11px;font-weight:700;}
+  .item.walk .dot{border-radius:2px;width:14px;height:4px;}
+
+  .pill{font:700 11px var(--font);white-space:nowrap;padding:2px 8px;border-radius:20px;background:var(--green);
+    color:#fff;box-shadow:0 2px 8px rgba(20,25,45,.20);transform:translate(-50%,-50%);cursor:pointer;}
+  .pill .m{font-weight:600;opacity:.85;font-size:10px;}
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:11px;padding:9px 12px;}
+  .maplibregl-popup-content h4{margin:0 0 3px;font-size:13px;}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>Verdure</h1>
+  <p class="sub">Axe <b>optionnel</b> et bipolaire : au <b>centre</b> il est ignoré.
+     Penche à gauche pour des <b>rues arborées</b>, à droite pour de vrais <b>parcs</b>.</p>
+  <div class="slider-wrap">
+    <input type="range" id="slider" min="-100" max="100" value="0" />
+    <div class="ticks"><span>🌳 Rues arborées</span><span class="mid">Peu importe</span><span class="end">Parcs 🌲</span></div>
+  </div>
+  <div class="mode" id="mode"></div>
+  <div class="reco" id="reco"></div>
+</div>
+
+<script>
+const map = new maplibregl.Map({
+  container:'map',
+  style:{ version:8,
+    sources:{ base:{ type:'raster',
+      tiles:['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+             'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+      tileSize:256, attribution:'© OpenStreetMap · © CARTO' } },
+    layers:[{ id:'base', type:'raster', source:'base' }] },
+  center:[126.994,37.576], zoom:13.1,
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}),'bottom-right');
+
+const centroid = f => { const b=new maplibregl.LngLatBounds();
+  const w=g=>g.forEach(c=>Array.isArray(c[0])?w(c):b.extend(c)); w(f.geometry.coordinates); return b.getCenter(); };
+const pct = v => Math.round((v+1)/2*100);              // park_v2 [-1,1] → 0..100 %
+const GREEN_RAMP = ['interpolate',['linear'],['get','park_v2'], -0.2,'#cfe0b8', 0.4,'#7cc06a', 1,'#137a41'];
+
+// Bipolar axis in [-100, +100]. Centre = ignored. Left pole = leafy streets (park_v2
+// canopy). Right pole = public park walks. |v| ≤ DEAD is a neutral dead-zone so the
+// centre reliably means "don't care".
+const DEAD = 8;
+const lerp = (a,b,t)=>a+(b-a)*Math.max(0,Math.min(1,t));
+
+let STREETS = [], WALKS = [], walkMarkers = [];
+
+Promise.all([
+  fetch('park-v2-preview-jongno.geojson',{cache:'no-store'}).then(r=>r.json()),
+  fetch('nature-paths-jongno.geojson',{cache:'no-store'}).then(r=>r.json()),
+]).then(([streetsGj, walksGj]) => {
+  STREETS = streetsGj.features.filter(f=>f.properties.is_street!==false);
+  WALKS = walksGj.features.filter(f=>!['paid','private','review'].includes(f.properties.access_class));
+
+  map.on('load', () => {
+    map.addSource('streets', { type:'geojson', data:{type:'FeatureCollection',features:STREETS} });
+    // base: every street, faint grey
+    map.addLayer({ id:'streets-base', type:'line', source:'streets',
+      paint:{ 'line-color':'#d9d9d4', 'line-width':1.4 } });
+    // highlighted green streets (filter updated by the slider)
+    map.addLayer({ id:'streets-green', type:'line', source:'streets',
+      layout:{'line-cap':'round'}, filter:['==',['get','name'],'__none__'],
+      paint:{ 'line-color':GREEN_RAMP, 'line-width':3.2 } });
+
+    map.addSource('walks', { type:'geojson', data:{type:'FeatureCollection',features:WALKS} });
+    map.addLayer({ id:'walks-halo', type:'line', source:'walks', layout:{visibility:'none','line-cap':'round'},
+      paint:{ 'line-color':'#fff','line-width':6,'line-opacity':.9 } });
+    map.addLayer({ id:'walks-line', type:'line', source:'walks', layout:{visibility:'none','line-cap':'round'},
+      paint:{ 'line-color':'#137a41','line-width':3.6 } });
+
+    const b = new maplibregl.LngLatBounds();
+    STREETS.forEach(f=>{ const w=g=>g.forEach(c=>Array.isArray(c[0])?w(c):b.extend(c)); w(f.geometry.coordinates); });
+    map.fitBounds(b, { padding:{top:30,right:30,bottom:30,left:330}, duration:0 });
+
+    document.getElementById('slider').addEventListener('input', e=>update(+e.target.value));
+    update(0);
+  });
+});
+
+function clearWalkPills(){ walkMarkers.forEach(m=>m.remove()); walkMarkers=[]; }
+
+function showWalkPills(list){
+  clearWalkPills();
+  list.forEach(f=>{ const p=f.properties;
+    const el=document.createElement('div'); el.className='pill';
+    el.innerHTML=`${p.name} <span class="m">${(p.path_m/1000).toFixed(1)} km</span>`;
+    el.onclick=()=>new maplibregl.Popup({offset:10}).setLngLat(centroid(f))
+      .setHTML(`<h4>${p.name}</h4>${p.type_label} · ${p.path_m} m · ${p.quiet_label}`).addTo(map);
+    walkMarkers.push(new maplibregl.Marker({element:el}).setLngLat(centroid(f)).addTo(map));
+  });
+}
+
+function update(v){
+  const modeEl = document.getElementById('mode'), recoEl = document.getElementById('reco');
+
+  // ---- neutral centre: axis ignored ----
+  if (Math.abs(v) <= DEAD) {
+    map.setFilter('streets-green', ['==',['get','name'],'__none__']);
+    ['walks-halo','walks-line'].forEach(l=>map.setLayoutProperty(l,'visibility','none'));
+    clearWalkPills();
+    modeEl.innerHTML = `<span class="tag off">axe ignoré</span>
+      <h2>Verdure : peu importe</h2><p>Curseur au centre — l'utilisateur n'a pas choisi cet axe, les autres critères décident seuls.</p>`;
+    recoEl.innerHTML = '';
+    return;
+  }
+
+  // ---- PARK side (right): public park walks, more of them as you lean right ----
+  if (v > DEAD) {
+    const lean = (v - DEAD) / (100 - DEAD);
+    map.setFilter('streets-green', ['all',['!=',['get','is_street'],false],['>=',['get','park_v2'],0.6]]);
+    map.setPaintProperty('streets-green','line-opacity',0.3);   // greenest streets stay as faint context
+    const ranked = WALKS.slice().sort((a,z)=>z.properties.path_m - a.properties.path_m);
+    const shown = ranked.slice(0, Math.round(lerp(4, WALKS.length, lean)));
+    const names = ['literal', shown.map(f=>f.properties.name)];
+    ['walks-halo','walks-line'].forEach(l=>{ map.setLayoutProperty(l,'visibility','visible');
+      map.setFilter(l, ['in',['get','name'], names]); });
+    showWalkPills(shown);
+    modeEl.innerHTML = `<span class="tag">côté parc</span>
+      <h2>${shown.length} balade${shown.length>1?'s':''} en parc</h2>
+      <p>Chemins qui traversent un parc public (payant/privé exclus). Plus tu penches à droite, plus on en propose.</p>`;
+    recoEl.innerHTML = shown.map(f=>{ const p=f.properties;
+      return `<div class="item walk"><span class="dot"></span><span class="nm">${p.name}</span><span class="val">${(p.path_m/1000).toFixed(1)} km</span></div>`; }).join('');
+    return;
+  }
+
+  // ---- GREENERY side (left): leafy streets, bar rises as you lean left ----
+  const lean = (-v - DEAD) / (100 - DEAD);
+  const t = lerp(0.0, 0.8, lean);
+  map.setPaintProperty('streets-green','line-opacity',1);
+  map.setFilter('streets-green', ['all',['!=',['get','is_street'],false],['>=',['get','park_v2'],t]]);
+  ['walks-halo','walks-line'].forEach(l=>map.setLayoutProperty(l,'visibility','none'));
+  clearWalkPills();
+  const matches = STREETS.filter(f=>f.properties.park_v2>=t).sort((a,z)=>z.properties.park_v2-a.properties.park_v2);
+  modeEl.innerHTML = `<span class="tag">côté verdure</span>
+    <h2>${matches.length} rues arborées</h2>
+    <p>Rues classées par canopée (score park_v2). Plus tu penches à gauche, moins il en reste — les plus vertes.</p>`;
+  recoEl.innerHTML = matches.slice(0,12).map(f=>{ const p=f.properties;
+    return `<div class="item"><span class="dot"></span><span class="nm">${p.name}</span><span class="val">${pct(p.park_v2)}%</span></div>`; }).join('');
+}
+</script>
+</body>
+</html>

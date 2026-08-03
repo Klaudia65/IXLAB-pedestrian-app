@@ -51,6 +51,10 @@ function Card({ card, dragX, dragY, dragging, isTop }) {
       {/* tag tray */}
       <div style={{ padding: '12px 14px 14px', flex: '0 0 auto', background: 'var(--card)' }}>
         <SceneTags tags={card.tags} />
+        {card.credit && (
+          <div style={{ marginTop: 9, fontSize: 10, color: 'var(--ink-faint)', lineHeight: 1.3,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.credit}</div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,356 @@
+{
+  "axes": [
+    [
+      "touristy_local",
+      "Touristy",
+      "Local"
+    ],
+    [
+      "historic_contemporary",
+      "Historic",
+      "Contemporary"
+    ],
+    [
+      "raw_polished",
+      "Raw",
+      "Polished"
+    ],
+    [
+      "quiet_lively",
+      "Quiet",
+      "Lively"
+    ],
+    [
+      "local_chain",
+      "Independent",
+      "Chain"
+    ],
+    [
+      "park",
+      "No park",
+      "By a park"
+    ]
+  ],
+  "images": [
+    {
+      "id": "115671784",
+      "title": "2012-05-11 Cargo motor trike and shops in Insadong.jpg",
+      "lon": 126.986167,
+      "lat": 37.573167,
+      "image": "images/115671784.jpg",
+      "license": "CC BY-SA 2.0",
+      "artist": "Mario Sánchez Prada",
+      "commons": "https://commons.wikimedia.org/wiki/File:2012-05-11_Cargo_motor_trike_and_shops_in_Insadong.jpg",
+      "street": "인사동6길",
+      "street_dist_m": 5.8,
+      "scores": {
+        "touristy_local": -0.2,
+        "historic_contemporary": -0.2,
+        "raw_polished": 0.0,
+        "quiet_lively": 0.517,
+        "local_chain": -1.0,
+        "park": -1.0
+      }
+    },
+    {
+      "id": "115671801",
+      "title": "2012-05-11 Insadong 01.jpg",
+      "lon": 126.984833,
+      "lat": 37.574167,
+      "image": "images/115671801.jpg",
+      "license": "CC BY-SA 2.0",
+      "artist": "Mario Sánchez Prada",
+      "commons": "https://commons.wikimedia.org/wiki/File:2012-05-11_Insadong_01.jpg",
+      "street": "인사동길",
+      "street_dist_m": 10.9,
+      "scores": {
+        "touristy_local": 0.333,
+        "historic_contemporary": -0.5,
+        "raw_polished": 1.0,
+        "quiet_lively": 0.593,
+        "local_chain": -1.0,
+        "park": -0.985
+      }
+    },
+    {
+      "id": "7265856",
+      "title": "A paper store at Insadong, Seoul-01.jpg",
+      "lon": 126.994228,
+      "lat": 37.572065,
+      "image": "images/7265856.jpg",
+      "license": "CC BY 2.0",
+      "artist": "Richard Fisher from London, UK",
+      "commons": "https://commons.wikimedia.org/wiki/File:A_paper_store_at_Insadong,_Seoul-01.jpg",
+      "street": "서순라길",
+      "street_dist_m": 39.9,
+      "scores": {
+        "touristy_local": 0.2,
+        "historic_contemporary": 0.333,
+        "raw_polished": -1.0,
+        "quiet_lively": 0.897,
+        "local_chain": -1.0,
+        "park": -0.266
+      }
+    },
+    {
+      "id": "141485852",
+      "title": "Adult industry in Jongno.jpg",
+      "lon": 126.980409,
+      "lat": 37.572712,
+      "image": "images/141485852.jpg",
+      "license": "CC BY-SA 2.0",
+      "artist": "m-louis .®",
+      "commons": "https://commons.wikimedia.org/wiki/File:Adult_industry_in_Jongno.jpg",
+      "street": "율곡로4길",
+      "street_dist_m": 27.1,
+      "scores": {
+        "touristy_local": -1.0,
+        "historic_contemporary": -1.0,
+        "raw_polished": null,
+        "quiet_lively": 0.365,
+        "local_chain": -1.0,
+        "park": -0.687
+      }
+    },
+    {
+      "id": "31185346",
+      "title": "Ambulance Daehakro Seoul Korea.jpg",
+      "lon": 127.00218333333,
+      "lat": 37.581038888889,
+      "image": "images/31185346.jpg",
+      "license": "CC BY-SA 3.0",
+      "artist": "parkyongjoo",
+      "commons": "https://commons.wikimedia.org/wiki/File:Ambulance_Daehakro_Seoul_Korea.jpg",
+      "street": "대학로8길",
+      "street_dist_m": 9.7,
+      "scores": {
+        "touristy_local": -1.0,
+        "historic_contemporary": 0.2,
+        "raw_polished": 1.0,
+        "quiet_lively": -0.821,
+        "local_chain": -1.0,
+        "park": -0.064
+      }
+    },
+    {
+      "id": "18063047",
+      "title": "Area east of Bukchon Hanok Village A.JPG",
+      "lon": 126.985635,
+      "lat": 37.581853,
+      "image": "images/18063047.jpg",
+      "license": "CC BY-SA 3.0",
+      "artist": "Sakaori (talk)",
+      "commons": "https://commons.wikimedia.org/wiki/File:Area_east_of_Bukchon_Hanok_Village_A.JPG",
+      "street": "북촌로12길",
+      "street_dist_m": 1.6,
+      "scores": {
+        "touristy_local": -0.6,
+        "historic_contemporary": -1.0,
+        "raw_polished": -1.0,
+        "quiet_lively": -0.213,
+        "local_chain": -1.0,
+        "park": -0.856
+      }
+    },
+    {
+      "id": "18063558",
+      "title": "Area east of Bukchon Hanok Village B.JPG",
+      "lon": 126.985517,
+      "lat": 37.582524,
+      "image": "images/18063558.jpg",
+      "license": "CC BY-SA 3.0",
+      "artist": "Sakaori (talk)",
+      "commons": "https://commons.wikimedia.org/wiki/File:Area_east_of_Bukchon_Hanok_Village_B.JPG",
+      "street": "북촌로",
+      "street_dist_m": 1.5,
+      "scores": {
+        "touristy_local": -0.2,
+        "historic_contemporary": -0.333,
+        "raw_polished": null,
+        "quiet_lively": -0.357,
+        "local_chain": -1.0,
+        "park": -0.782
+      }
+    },
+    {
+      "id": "18063659",
+      "title": "Area west of Bukchon Hanok Village A.JPG",
+      "lon": 126.983736,
+      "lat": 37.582524,
+      "image": "images/18063659.jpg",
+      "license": "CC BY-SA 3.0",
+      "artist": "Sakaori (talk)",
+      "commons": "https://commons.wikimedia.org/wiki/File:Area_west_of_Bukchon_Hanok_Village_A.JPG",
+      "street": "북촌로11길",
+      "street_dist_m": 2.8,
+      "scores": {
+        "touristy_local": -0.333,
+        "historic_contemporary": -0.2,
+        "raw_polished": null,
+        "quiet_lively": -0.791,
+        "local_chain": -1.0,
+        "park": -0.625
+      }
+    },
+    {
+      "id": "18063729",
+      "title": "Area west of Bukchon Hanok Village B.JPG",
+      "lon": 126.983457,
+      "lat": 37.583264,
+      "image": "images/18063729.jpg",
+      "license": "CC BY-SA 3.0",
+      "artist": "Sakaori (talk)",
+      "commons": "https://commons.wikimedia.org/wiki/File:Area_west_of_Bukchon_Hanok_Village_B.JPG",
+      "street": "북촌로11길",
+      "street_dist_m": 4.6,
+      "scores": {
+        "touristy_local": -0.333,
+        "historic_contemporary": -0.2,
+        "raw_polished": null,
+        "quiet_lively": -0.791,
+        "local_chain": -1.0,
+        "park": -0.625
+      }
+    },
+    {
+      "id": "54774571",
+      "title": "Back alley - panoramio (1).jpg",
+      "lon": 126.984731,
+      "lat": 37.575012,
+      "image": "images/54774571.jpg",
+      "license": "CC BY 3.0",
+      "artist": "ccfarmer",
+      "commons": "https://commons.wikimedia.org/wiki/File:Back_alley_-_panoramio_(1).jpg",
+      "street": "인사동14길",
+      "street_dist_m": 1.6,
+      "scores": {
+        "touristy_local": 0.333,
+        "historic_contemporary": -1.0,
+        "raw_polished": 1.0,
+        "quiet_lively": 0.684,
+        "local_chain": -1.0,
+        "park": -1.0
+      }
+    },
+    {
+      "id": "41729552",
+      "title": "Back street (seoul,鐘路) - panoramio.jpg",
+      "lon": 126.99072,
+      "lat": 37.574434,
+      "image": "images/41729552.jpg",
+      "license": "CC BY 3.0",
+      "artist": "yamarhythm",
+      "commons": "https://commons.wikimedia.org/wiki/File:Back_street_(seoul,鐘路)_-_panoramio.jpg",
+      "street": "돈화문로11가길",
+      "street_dist_m": 3.0,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": 0.0,
+        "raw_polished": -1.0,
+        "quiet_lively": -0.449,
+        "local_chain": -0.951,
+        "park": -0.841
+      }
+    },
+    {
+      "id": "41729716",
+      "title": "Back street (鐘路、Seoul) - panoramio.jpg",
+      "lon": 126.990602,
+      "lat": 37.574795,
+      "image": "images/41729716.jpg",
+      "license": "CC BY 3.0",
+      "artist": "yamarhythm",
+      "commons": "https://commons.wikimedia.org/wiki/File:Back_street_(鐘路、Seoul)_-_panoramio.jpg",
+      "street": "돈화문로11가길",
+      "street_dist_m": 3.3,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": 0.0,
+        "raw_polished": -1.0,
+        "quiet_lively": -0.449,
+        "local_chain": -0.951,
+        "park": -0.841
+      }
+    },
+    {
+      "id": "143478981",
+      "title": "Bukchon Hanok Village 01.jpg",
+      "lon": 126.983531,
+      "lat": 37.582872,
+      "image": "images/143478981.jpg",
+      "license": "CC0",
+      "artist": "Bgag",
+      "commons": "https://commons.wikimedia.org/wiki/File:Bukchon_Hanok_Village_01.jpg",
+      "street": "북촌로11길",
+      "street_dist_m": 2.8,
+      "scores": {
+        "touristy_local": -0.333,
+        "historic_contemporary": -0.2,
+        "raw_polished": null,
+        "quiet_lively": -0.791,
+        "local_chain": -1.0,
+        "park": -0.625
+      }
+    },
+    {
+      "id": "163118944",
+      "title": "Bukchon Hanok Village Mar 2025 01.jpg",
+      "lon": 126.984795,
+      "lat": 37.581554,
+      "image": "images/163118944.jpg",
+      "license": "CC BY-SA 4.0",
+      "artist": "Epicgenius",
+      "commons": "https://commons.wikimedia.org/wiki/File:Bukchon_Hanok_Village_Mar_2025_01.jpg",
+      "street": "북촌로11길",
+      "street_dist_m": 8.7,
+      "scores": {
+        "touristy_local": -0.333,
+        "historic_contemporary": -0.2,
+        "raw_polished": null,
+        "quiet_lively": -0.791,
+        "local_chain": -1.0,
+        "park": -0.625
+      }
+    },
+    {
+      "id": "195957933",
+      "title": "Bukchon, Seoul - Bukchon3283.jpg",
+      "lon": 126.985271,
+      "lat": 37.578707,
+      "image": "images/195957933.jpg",
+      "license": "CC0",
+      "artist": "lumoplank",
+      "commons": "https://commons.wikimedia.org/wiki/File:Bukchon,_Seoul_-_Bukchon3283.jpg",
+      "street": "북촌로",
+      "street_dist_m": 3.4,
+      "scores": {
+        "touristy_local": -0.2,
+        "historic_contemporary": -0.333,
+        "raw_polished": null,
+        "quiet_lively": -0.357,
+        "local_chain": -1.0,
+        "park": -0.782
+      }
+    },
+    {
+      "id": "150057362",
+      "title": "Bukchon-ro 11-gil street with hanok houses at sunrise in Bukchon Hanok Village Seoul.jpg",
+      "lon": 126.984173,
+      "lat": 37.583725,
+      "image": "images/150057362.jpg",
+      "license": "CC BY-SA 4.0",
+      "artist": "Basile Morin",
+      "commons": "https://commons.wikimedia.org/wiki/File:Bukchon-ro_11-gil_street_with_hanok_houses_at_sunrise_in_Bukchon_Hanok_Village_Seoul.jpg",
+      "street": "북촌로11길",
+      "street_dist_m": 1.3,
+      "scores": {
+        "touristy_local": -0.333,
+        "historic_contemporary": -0.2,
+        "raw_polished": null,
+        "quiet_lively": -0.791,
+        "local_chain": -1.0,
+        "park": -0.625
+      }
+    }
+  ]
+}

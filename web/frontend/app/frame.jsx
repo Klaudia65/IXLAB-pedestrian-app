@@ -110,8 +110,19 @@ function useDragScroll() {
 const ThemeCtx = React.createContext(THEMES.wander);
 
 // ---- the phone shell ----
-function DeviceFrame({ theme, children }) {
+// `bare` (mobile) drops the decorative device bezel and fills the viewport, so
+// the prototype behaves like a real full-screen mobile web app. The desktop
+// layout keeps the 390×844 mockup with its dynamic island + home indicator.
+function DeviceFrame({ theme, children, bare }) {
   const t = theme;
+  const vars = Object.fromEntries(Object.entries(t.vars));
+  if (bare) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        background: 'var(--paper)', ...vars, color: 'var(--ink)', fontFamily: t.fontUI }}>
+        {children}
+      </div>);
+  }
   return (
     <div style={{ width: 390, height: 844, borderRadius: 54, padding: 13, flex: '0 0 auto',
       background: t.dark ? '#05070A' : '#0C0C0E',
@@ -119,7 +130,7 @@ function DeviceFrame({ theme, children }) {
       position: 'relative' }}>
       <div style={{ position: 'absolute', inset: 13, borderRadius: 42, overflow: 'hidden',
         background: 'var(--paper)', display: 'flex', flexDirection: 'column',
-        ...Object.fromEntries(Object.entries(t.vars)), color: 'var(--ink)', fontFamily: t.fontUI }}>
+        ...vars, color: 'var(--ink)', fontFamily: t.fontUI }}>
         {/* dynamic island */}
         <div style={{ position: 'absolute', top: 11, left: '50%', transform: 'translateX(-50%)',
           width: 120, height: 33, background: '#000', borderRadius: 20, zIndex: 50 }} />
@@ -132,11 +143,89 @@ function DeviceFrame({ theme, children }) {
 
 }
 
+// ---- top app bar (mobile) — burger + current screen name + wordmark ----
+// Global chrome shown on every screen in the full-bleed mobile layout, giving a
+// consistent home for the navigation drawer trigger (the desktop layout uses the
+// side Dock instead). Honours the notch via env(safe-area-inset-top).
+function AppBar({ screen, onMenu }) {
+  const t = React.useContext(ThemeCtx);
+  const cur = SCREENS.find((s) => s.id === screen);
+  const name = cur ? cur.name : 'explore';
+  return (
+    <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 12, position: 'relative', zIndex: 30,
+      padding: 'calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px', background: 'var(--paper)',
+      borderBottom: '1px solid var(--line)' }}>
+      <button onClick={onMenu} aria-label="Open menu"
+        style={{ flex: '0 0 auto', width: 40, height: 40, borderRadius: 12, border: '1px solid var(--line)',
+          background: 'var(--card)', color: 'var(--ink)', cursor: 'pointer', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', boxShadow: 'var(--shadow)' }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round">
+          <path d="M3 6h18M3 12h18M3 18h18" /></svg>
+      </button>
+      <div style={{ fontFamily: t.fontHead, fontWeight: 800, fontSize: 16.5, letterSpacing: '-0.01em', color: 'var(--ink)' }}>{name}</div>
+      <div style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', fontFamily: t.fontHead,
+        fontWeight: 700, fontSize: 18, letterSpacing: '-0.03em', color: 'var(--ink)' }}>
+        explore
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--accent)', marginLeft: 2, alignSelf: 'flex-end', marginBottom: 3 }} />
+      </div>
+    </div>);
+}
+
+// ---- navigation drawer (mobile) — the burger's slide-in panel ----
+// Same destinations as the desktop Dock (SCREENS), as a left-anchored sheet over
+// a dimming scrim. Tapping a destination navigates and closes.
+function NavDrawer({ open, onClose, screen, go }) {
+  const t = React.useContext(ThemeCtx);
+  const ease = 'cubic-bezier(.22,1,.36,1)';
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 60, pointerEvents: open ? 'auto' : 'none' }}>
+      {/* dimming scrim */}
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(10,24,20,0.42)',
+        opacity: open ? 1 : 0, transition: `opacity .3s ${ease}` }} />
+      {/* the sliding panel */}
+      <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: '84%', maxWidth: 320,
+        display: 'flex', flexDirection: 'column', background: 'var(--paper)',
+        boxShadow: '0 0 60px rgba(0,0,0,0.35)', transform: open ? 'none' : 'translateX(-102%)',
+        transition: `transform .34s ${ease}`,
+        padding: 'calc(env(safe-area-inset-top, 0px) + 22px) 18px calc(env(safe-area-inset-bottom, 0px) + 22px)' }}>
+        {/* header — wordmark + close */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'baseline', fontFamily: t.fontHead,
+            fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, color: 'var(--ink)' }}>
+            explore
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent)', marginLeft: 3, alignSelf: 'flex-end', marginBottom: 4 }} />
+          </div>
+          <button onClick={onClose} aria-label="Close menu"
+            style={{ width: 36, height: 36, borderRadius: 10, border: '1px solid var(--line)', background: 'var(--card)',
+              color: 'var(--ink-soft)', cursor: 'pointer', fontSize: 18, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+
+        <div style={{ fontFamily: t.fontMono, fontSize: 10.5, letterSpacing: '0.18em', textTransform: 'uppercase',
+          color: 'var(--ink-faint)', marginBottom: 10 }}>Screens</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, overflowY: 'auto' }}>
+          {SCREENS.map((s) => {
+            const on = s.id === screen;
+            return (
+              <button key={s.id} onClick={() => go(s.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '12px 14px', cursor: 'pointer',
+                  borderRadius: t.radiusSm, textAlign: 'left', fontFamily: t.fontUI,
+                  border: on ? '1.5px solid var(--accent)' : '1.5px solid var(--line)',
+                  background: on ? 'var(--accent)' : 'var(--card)', color: on ? 'var(--accent-ink)' : 'var(--ink)',
+                  transition: 'background .15s, border-color .15s' }}>
+                <span style={{ fontFamily: t.fontMono, fontSize: 10.5, fontWeight: 700, opacity: 0.7, width: 20,
+                  fontVariantNumeric: 'tabular-nums' }}>{s.n}</span>
+                <span style={{ fontSize: 14.5, fontWeight: 700 }}>{s.name}</span>
+              </button>);
+          })}
+        </div>
+      </div>
+    </div>);
+}
+
 // ---- control dock (lives OUTSIDE the phone) ----
 const SCREENS = [
 { id: 'landing', n: '0', name: 'Landing' },
-{ id: 'swipe', n: '1A', name: 'Swipe' },
-{ id: 'sliders', n: '1B', name: 'Sliders' },
+{ id: 'sliders', n: '1', name: 'Sliders' },
 { id: 'map2', n: '2', name: 'Map · detailed' },
 { id: 'social', n: '3A', name: 'Social' },
 { id: 'group', n: '3B', name: 'Group · axes' },
@@ -179,10 +268,10 @@ function Dock({ screen, setScreen }) {
       </div>
 
       <div style={{ fontSize: 11, color: '#5E8A7C', lineHeight: 1.5, borderTop: '1px solid rgba(37,90,75,0.16)', paddingTop: 14 }}>
-        Tip: on the swipe deck, drag your own CC0 Seoul photos onto the empty cards — they persist.
+        Tip: onboarding is a "this or that" on real Jongno streets — one pick per axis (raw vs polished, quiet vs lively…). Your picks set the base profile: the vibe sliders + profile chips.
       </div>
     </div>);
 
 }
 
-Object.assign(window, { StatusBar, Label, PrimaryBtn, Avatar, Segmented, ThemeCtx, DeviceFrame, Dock, SCREENS, useDragScroll });
+Object.assign(window, { StatusBar, Label, PrimaryBtn, Avatar, Segmented, ThemeCtx, DeviceFrame, AppBar, NavDrawer, Dock, SCREENS, useDragScroll });

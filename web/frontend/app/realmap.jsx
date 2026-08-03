@@ -10,6 +10,9 @@
      · function → "bakery / restos" → streets whose aggregated
                   commerce signature matches that category
      · place    → a street/park name → name lookup in OSM data
+     · dong     → a neighbourhood name ("인사동", "Bukchon") → zoom the map to
+                  that neighbourhood (dong-jongno.geojson: precise 법정동 points +
+                  a few 행정동 polygons — see backend/offline/dong_boundaries.py)
 
    Data (all local geojson in web/frontend/):
      street-character-jongno.geojson  → base streets + function + place
@@ -157,6 +160,23 @@ function resolvePlace(q, feats) {
   return out.sort((a, b) => b.score - a.score).slice(0, 12);
 }
 
+// NEIGHBOURHOOD (동) resolver — match a free-text query against the administrative
+// dong loaded from dong-jongno.geojson (built by backend/offline/dong_boundaries.py).
+// Matching is EXACT on a normalised token (spaces/hyphens stripped, lowercased) so a
+// bare neighbourhood name ("삼청동", "Bukchon", "인사동") zooms to the zone, while a
+// street name that merely contains it ("인사동길") falls through to the street search.
+function normDong(s) {
+  return (s || '').toLowerCase().replace(/[\s-]/g, '').trim();
+}
+function matchDong(q, dongFeats) {
+  const s = normDong(q);
+  if (!s) return null;
+  return dongFeats.find(f => {
+    const aliases = f.properties.aliases || [];
+    return aliases.some(a => normDong(a) === s);
+  }) || null;
+}
+
 // NATURE resolver — recommended WALKS, not park fills. nature-paths-jongno
 // (built offline by backend/offline/nature_paths.py) is already one route per
 // green area, pre-sorted nicest-first (청계천 riverside, 경복궁, 낙산 wall trail…).
@@ -167,9 +187,16 @@ function resolvePlace(q, feats) {
 // calmest first, walks with no population reading (quiet_value null) last. It also
 // shows the calm/moderate/busy label in the subtitle. Without it (the "Nature &
 // outdoor" chip) the walks keep their default nicest-type-then-longest order.
+// Only PUBLIC & free parks are recommendable: a walk that ends at a ticket gate
+// (경복궁) or inside a private residence garden breaks the outing. access_class is
+// tagged offline from OSM by backend/offline/nature_paths_access.py.
+function isPublicWalk(f) {
+  return !['paid', 'private', 'review'].includes(f.properties.access_class);
+}
+
 function resolveNature(feats, opts) {
   const quiet = !!(opts && opts.quiet);
-  const list = feats.map(f => {
+  const list = feats.filter(isPublicWalk).map(f => {
     const p = f.properties, km = (p.path_m || 0) / 1000;
     const dist = km >= 1 ? `${km.toFixed(1)} km` : `${p.path_m} m`;
     const qlbl = quiet && p.quiet_label && p.quiet_label !== '—' ? ` · ${p.quiet_label}` : '';
@@ -232,8 +259,35 @@ const VIBE_AXIS_MAP = {
   crowd: 'touristy_local',        // slider 0=Touristy → -1 ; axis pos=local(+1)
   energy: 'quiet_lively',         // slider 0=Quiet → -1 ; axis pos=lively(+1)  [생활인구 14h]
   origin: 'local_chain',          // slider 0=Local → -1 ; axis pos=chain(+1)   [상가정보]
-  green: 'park',                  // slider 0=Little green → -1 ; axis pos=near a park(+1) [OSM public-green proximity]
+  green: 'park_v2',               // greenery is NOT a bipolar slider — see greenMode below.
 };
+
+// Greenery is special: not a Greenery↔Park slider (the two poles aren't opposites,
+// they're two doses of green) but a two-button choice with an off state:
+//   'off'   → axis not factored in
+//   'leafy' → rank streets by canopy (park_v2); shown as the usual heat cloud
+//   'park'  → surface the public park WALKS (nature-paths) as green routes + bubbles
+function readGreenMode() {
+  try { const v = localStorage.getItem('seoulwalk.sliders.greenMode'); return v != null ? JSON.parse(v) : 'off'; }
+  catch (e) { return 'off'; }
+}
+
+// Build a vibe target from in-memory slider state (values in [0,1] + dropped ids).
+// Factored out of readVibeTarget so the live in-map sliders can rank without a
+// localStorage round-trip (usePersist writes on a later effect tick).
+function targetFromSliders(vals, off, greenMode) {
+  const target = {};
+  Object.keys(VIBE_AXIS_MAP).forEach(sid => {
+    if (sid === 'green') return;                   // greenery handled by greenMode, not a slider
+    if (off && off.includes(sid)) return;          // user dropped this dimension
+    const v = vals[sid];
+    if (v == null) return;
+    target[VIBE_AXIS_MAP[sid]] = v * 2 - 1;         // [0,1] slider → [-1,1] axis
+  });
+  // 'leafy' ranks streets by canopy; 'park' shows walks instead (handled in runVibe).
+  if (greenMode === 'leafy') target['park_v2'] = 1;
+  return target;
+}
 
 function readVibeTarget() {
   // pull the persisted slider state (same keys as sliders.jsx / usePersist)
@@ -241,14 +295,7 @@ function readVibeTarget() {
   const defVals = Object.fromEntries((window.VIBE_AXES || []).map(a => [a.id, a.def]));
   const vals = read('sliders.vals', defVals);
   const off = read('sliders.off', []);
-  const target = {};
-  Object.keys(VIBE_AXIS_MAP).forEach(sid => {
-    if (off.includes(sid)) return;                 // user dropped this dimension
-    const v = vals[sid];
-    if (v == null) return;
-    target[VIBE_AXIS_MAP[sid]] = v * 2 - 1;         // [0,1] slider → [-1,1] axis
-  });
-  return target;
+  return targetFromSliders(vals, off, readGreenMode());
 }
 
 // Percentile-normalise every axis the SAME way, so the six sliders react in one
@@ -706,6 +753,132 @@ function ChipRow({ activeKind, onVibe, onPreset, onCategory }) {
 }
 
 /* ============================================================
+   IN-MAP VIBE SLIDERS — a compact copy of screen 1B's sliders that
+   floats over the map so the user can tweak the vibe and watch the
+   heat cloud re-rank live. It reads/writes the SAME persisted keys
+   (sliders.vals / sliders.off) as SlidersScreen, so the two stay in
+   sync. Every change calls onVibeChange(vals, off) to re-rank.
+   ============================================================ */
+function MiniVibeSlider({ axis, value, onChange, onDrop }) {
+  const trackRef = React.useRef(null);
+  const dragging = React.useRef(false);
+  const setFromClient = (x) => { const r = trackRef.current.getBoundingClientRect(); onChange(clamp((x - r.left) / r.width, 0, 1)); };
+  const down = (e) => { dragging.current = true; try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {} setFromClient(e.clientX); };
+  const move = (e) => { if (dragging.current) setFromClient(e.clientX); };
+  const up = () => { dragging.current = false; };
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: value < 0.5 ? 'var(--ink)' : 'var(--ink-faint)' }}>{axis.left}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: value >= 0.5 ? 'var(--ink)' : 'var(--ink-faint)' }}>{axis.right}</span>
+          {onDrop && (
+            <button onClick={onDrop} title="Don't factor this in"
+              style={{ width: 17, height: 17, borderRadius: '50%', border: 'none', background: 'var(--card-2)', color: 'var(--ink-faint)', cursor: 'pointer', fontSize: 12, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+          )}
+        </span>
+      </div>
+      <div ref={trackRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+        style={{ position: 'relative', height: 20, display: 'flex', alignItems: 'center', cursor: 'pointer', touchAction: 'none' }}>
+        <div style={{ position: 'absolute', left: 0, right: 0, height: 3, borderRadius: 999, background: 'var(--line)' }} />
+        <div style={{ position: 'absolute', left: 0, width: `${value * 100}%`, height: 3, borderRadius: 999, background: 'var(--accent)', opacity: 0.55 }} />
+        <div style={{ position: 'absolute', left: `${value * 100}%`, transform: 'translateX(-50%)', width: 16, height: 16, borderRadius: '50%',
+          background: 'var(--card)', border: '2px solid var(--accent)', boxShadow: 'var(--shadow)' }} />
+      </div>
+    </div>
+  );
+}
+
+// Greenery control: two buttons ("Leafy street" / "Park") instead of a bipolar
+// slider, because the two ends aren't opposites — they're two doses of green. One
+// is always selected while active; the × drops the whole axis (→ a "+ Greenery"
+// chip to add back), exactly like the × on the other sliders.
+function GreeneryButtons({ mode, onMode, onDrop }) {
+  const t = React.useContext(ThemeCtx);
+  const btn = (val, label, sub) => {
+    const sel = mode === val;
+    return (
+      <button onClick={() => onMode(val)}
+        style={{ flex: 1, padding: '7px 6px', borderRadius: t.radiusSm, cursor: 'pointer', fontFamily: t.fontUI,
+          border: '1px solid ' + (sel ? 'var(--ink)' : 'var(--line)'), background: sel ? 'var(--ink)' : 'var(--card)',
+          color: sel ? '#fff' : 'var(--ink-soft)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+        <span style={{ fontWeight: 700, fontSize: 11.5 }}>{label}</span>
+        <span style={{ fontSize: 9, opacity: 0.7 }}>{sub}</span>
+      </button>
+    );
+  };
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--ink)' }}>Greenery</span>
+        {onDrop && (
+          <button onClick={onDrop} title="Don't factor this in"
+            style={{ width: 17, height: 17, borderRadius: '50%', border: 'none', background: 'var(--card-2)', color: 'var(--ink-faint)', cursor: 'pointer', fontSize: 12, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {btn('leafy', 'Leafy street', 'a little green')}
+        {btn('park', 'Park', 'a green walk')}
+      </div>
+    </div>
+  );
+}
+
+function VibeSlidersPanel({ onVibeChange, onClose }) {
+  const t = React.useContext(ThemeCtx);
+  const [vals, setVals] = usePersist('sliders.vals', Object.fromEntries(VIBE_AXES.map(a => [a.id, a.def])));
+  const [off, setOff] = usePersist('sliders.off', []);
+  const [greenMode, setGreenMode] = usePersist('sliders.greenMode', 'off');
+  // greenery is handled by its own two-button control, not as a slider row
+  const active = VIBE_AXES.filter(a => a.id !== 'green' && !off.includes(a.id));
+  const muted = VIBE_AXES.filter(a => a.id !== 'green' && off.includes(a.id));
+  const set = (id, v) => { const nv = { ...vals, [id]: v }; setVals(nv); onVibeChange(nv, off, greenMode); };
+  const drop = (id) => { const no = off.includes(id) ? off : [...off, id]; setOff(no); onVibeChange(vals, no, greenMode); };
+  const restore = (id) => { const no = off.filter(x => x !== id); setOff(no); onVibeChange(vals, no, greenMode); };
+  const onGreen = (m) => { setGreenMode(m); onVibeChange(vals, off, m); };
+  return (
+    <div style={{ marginTop: 8, background: 'var(--card)', border: '1px solid var(--line)', borderRadius: t.radius,
+      boxShadow: 'var(--shadow)', padding: '10px 12px 12px', maxHeight: '48vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9, flex: '0 0 auto' }}>
+        <span style={{ fontFamily: t.fontMono, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)' }}>Tune your vibe · live</span>
+        <button onClick={onClose} aria-label="Close vibe sliders"
+          style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--line)', background: 'var(--card-2)',
+            color: 'var(--ink-soft)', cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+      </div>
+      <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {greenMode !== 'off' && <GreeneryButtons mode={greenMode} onMode={onGreen} onDrop={() => onGreen('off')} />}
+        {greenMode !== 'off' && <div style={{ borderTop: '1px solid var(--line)' }} />}
+        {active.map(a => (
+          <MiniVibeSlider key={a.id} axis={a} value={vals[a.id] ?? 0.5}
+            onChange={v => set(a.id, v)} onDrop={() => drop(a.id)} />
+        ))}
+        {active.length === 0 && (
+          <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', textAlign: 'center', padding: '4px 0' }}>No dimensions — add one back below.</div>
+        )}
+        {(muted.length > 0 || greenMode === 'off') && (
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 9, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {greenMode === 'off' && (
+              <button onClick={() => onGreen('leafy')}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 999, border: '1px solid var(--line)',
+                  background: 'var(--card)', color: 'var(--ink-soft)', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: t.fontUI }}>
+                <span style={{ fontSize: 13, lineHeight: 1, color: 'var(--accent)' }}>+</span>Greenery
+              </button>
+            )}
+            {muted.map(a => (
+              <button key={a.id} onClick={() => restore(a.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 999, border: '1px solid var(--line)',
+                  background: 'var(--card)', color: 'var(--ink-soft)', fontWeight: 700, fontSize: 11, cursor: 'pointer', fontFamily: t.fontUI }}>
+                <span style={{ fontSize: 13, lineHeight: 1, color: 'var(--accent)' }}>+</span>{a.left} ↔ {a.right}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    LOCAL FAVORITE — "streets locals love" (the local thread),
    reimplemented natively so it lives inside the app like the
    other screens. This DUPLICATES the standalone page
@@ -743,12 +916,18 @@ function LocalFavoriteView() {
     const map = new maplibregl.Map({
       container: elRef.current, style: buildBaseStyle(),
       bounds: [[JONGNO_BBOX[0], JONGNO_BBOX[1]], [JONGNO_BBOX[2], JONGNO_BBOX[3]]],
-      fitBoundsOptions: { padding: 20 }, attributionControl: { compact: true },
+      fitBoundsOptions: { padding: 20 }, attributionControl: false,
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    // zoom bottom-right; the collapsed (i) attribution bottom-LEFT, lifted just
+    // above the legend (see the scoped .rms-localsmap CSS below). This map's frame
+    // already stops above the tab bar (bottom: MAP_TAB_H), so nothing is clipped.
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
     map.on('load', () => {
       if (cancelled) return;
+      // start the (i) attribution collapsed (small dot), not the expanded bar.
+      map.getContainer().querySelectorAll('.maplibregl-compact-show').forEach(el => el.classList.remove('maplibregl-compact-show'));
       map.addSource('fil', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 
       // Shared paint for the cobalt thread: a white casing under a thin dashed
@@ -841,7 +1020,10 @@ function LocalFavoriteView() {
 
       {/* the map fills the rest, with the legend floating bottom-left */}
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-        <div ref={elRef} style={{ position: 'absolute', inset: 0 }} />
+        {/* lift the bottom-left (i) attribution just above the ~82px legend box
+            (legend sits at bottom:12), so the little dot rests right over it. */}
+        <style>{`.rms-localsmap .maplibregl-ctrl-bottom-left { bottom: 100px; }`}</style>
+        <div ref={elRef} className="rms-localsmap" style={{ position: 'absolute', inset: 0 }} />
         <div style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 2, maxWidth: '62%',
           background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)',
           border: '1px solid var(--line)', borderRadius: 12, padding: '9px 11px',
@@ -914,9 +1096,12 @@ function RealMapScreen() {
   const scFeats = React.useRef([]);      // street-character features (function + place)
   const vibeFeats = React.useRef([]);    // NLP-scored named streets (vibe)
   const natureFeats = React.useRef([]);  // recommended nature walks (nature category)
+  const dongFeats = React.useRef([]);    // administrative dong polygons (neighbourhood search)
   const netRef = React.useRef(null);     // routing graph (walk-net-jongno.json)
   const routeIdxRef = React.useRef(null);// precomputed normalised axes + adjacency
   const startNodeRef = React.useRef(null);// fake-GPS start, snapped to a graph node
+  const greenModeRef = React.useRef(readGreenMode()); // 'off' | 'leafy' | 'park'
+  const natureMarkersRef = React.useRef([]);          // green name bubbles for park walks
 
   const [status, setStatus] = React.useState('Loading the neighbourhood…');
   const [tab, setTab] = React.useState('search');     // bottom nav: 'search' | 'locals'
@@ -931,6 +1116,7 @@ function RealMapScreen() {
   resultsRef.current = results;
   const [selected, setSelected] = React.useState(null);
   const [sheetOpen, setSheetOpen] = React.useState(true);
+  const [showSliders, setShowSliders] = React.useState(false);  // in-map vibe sliders panel
   const [routeStats, setRouteStats] = React.useState(null);  // {m, min, legs} of the drawn walk
   const [walkOptions, setWalkOptions] = React.useState(null);// proposed walks joining the vibe streets
   const [vibeStreets, setVibeStreets] = React.useState(null);// the street list to return to from a walk
@@ -953,19 +1139,36 @@ function RealMapScreen() {
     const map = new maplibregl.Map({
       container: mapEl.current, style: buildBaseStyle(),
       bounds: [[JONGNO_BBOX[0], JONGNO_BBOX[1]], [JONGNO_BBOX[2], JONGNO_BBOX[3]]],
-      fitBoundsOptions: { padding: 30 }, attributionControl: { compact: true },
+      fitBoundsOptions: { padding: 30 }, attributionControl: false,
     });
     mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    // zoom bottom-right, the collapsed (i) attribution bottom-LEFT — kept off the
+    // top so the top-anchored search bar never sits on top of them.
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
     map.on('load', () => {
       if (cancelled) return;
+
+      // start the (i) attribution collapsed (small dot), not the expanded bar —
+      // MapLibre opens compact controls by default, so drop the "show" class.
+      map.getContainer().querySelectorAll('.maplibregl-compact-show').forEach(el => el.classList.remove('maplibregl-compact-show'));
 
       // base street network — every named street, faint (the "clean" canvas)
       map.addSource('streets-base', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'streets-base', type: 'line', source: 'streets-base',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': MAP_PAL.street, 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1, 16, 2.4, 19, 5], 'line-opacity': 0.28 } });
+
+      // Neighbourhood (동) highlight — a soft accent wash + dashed outline drawn
+      // when the user searches a dong name. Sits just above the base street net so
+      // the streets still read on top of the tint.
+      map.addSource('dong-region', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'dong-fill', type: 'fill', source: 'dong-region',
+        paint: { 'fill-color': MAP_PAL.accent, 'fill-opacity': 0.08 } });
+      map.addLayer({ id: 'dong-outline', type: 'line', source: 'dong-region',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': MAP_PAL.accent, 'line-width': 2, 'line-opacity': 0.55, 'line-dasharray': [2, 1.5] } });
 
       // Nature highlight — recommended WALKS drawn as green routes (halo + line),
       // in the design system's positive/mint-green. A white halo lifts them off
@@ -1057,6 +1260,12 @@ function RealMapScreen() {
         natureFeats.current = gj.features || [];
       }).catch(() => { /* nature category just stays empty */ });
 
+      // administrative dong (행정동) — powers "zoom to a neighbourhood the user names".
+      fetch('dong-jongno.geojson').then(r => r.json()).then(gj => {
+        if (cancelled) return;
+        dongFeats.current = (gj.features || []).filter(f => f.properties && f.properties.name);
+      }).catch(() => { /* neighbourhood search just stays unavailable */ });
+
       // routing graph — powers the "38-min walk" orienteering path. Once loaded,
       // snap the fake-GPS start to a node and drop a pulsing "you are here" puck.
       fetch('walk-net-jongno.json').then(r => r.json()).then(net => {
@@ -1082,25 +1291,76 @@ function RealMapScreen() {
   function clearHighlights() {
     const map = mapRef.current;
     if (!map) return;
-    ['candidates', 'candidates-heat', 'green-cand', 'route'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
+    ['candidates', 'candidates-heat', 'green-cand', 'route', 'dong-region'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
+    clearNatureBubbles();
   }
-  // fit the view to an arbitrary set of features (any geometry type).
-  function fitTo(features) {
+  // Green name bubbles over each park walk (the "Park" greenery mode). DOM markers,
+  // so they live outside React and must be added/removed explicitly.
+  function clearNatureBubbles() { natureMarkersRef.current.forEach(m => m.remove()); natureMarkersRef.current = []; }
+  function setNatureBubbles(list) {
+    const map = mapRef.current;
+    clearNatureBubbles();
+    if (!map) return;
+    list.forEach(r => {
+      const f = r.feature; if (!f || !f.geometry) return;
+      const pts = coordsOf(f.geometry); if (!pts.length) return;
+      const b = new maplibregl.LngLatBounds(); pts.forEach(p => b.extend(p));  // centre of the walk
+      const el = document.createElement('div');
+      el.textContent = r.name;
+      el.style.cssText = `font-family:${t.fontUI};font-weight:700;font-size:11px;white-space:nowrap;` +
+        `padding:3px 9px;border-radius:999px;background:${MAP_PAL.good};color:#fff;` +
+        `box-shadow:0 2px 8px rgba(20,25,45,.25);cursor:pointer;`;
+      el.onclick = () => selectResultByName(r.name);
+      natureMarkersRef.current.push(new maplibregl.Marker({ element: el }).setLngLat(b.getCenter()).addTo(map));
+    });
+  }
+  // fit the view to an arbitrary set of features (any geometry type). `pad`
+  // overrides the default insets — used when the sliders panel covers the top,
+  // so the highlighted streets get framed in the strip left visible below it.
+  const DEFAULT_FIT_PAD = { top: 120, bottom: 300, left: 40, right: 40 };
+  function fitTo(features, pad) {
     const map = mapRef.current;
     if (!map || !features.length) return;
     const b = new maplibregl.LngLatBounds();
     features.forEach(f => coordsOf(f.geometry).forEach(p => b.extend(p)));
-    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 120, bottom: 300, left: 40, right: 40 }, maxZoom: 16 });
+    if (!b.isEmpty()) map.fitBounds(b, { padding: pad || DEFAULT_FIT_PAD, maxZoom: 16 });
   }
   // STREET highlight (commerce categories, vibe, place, free-text).
-  function showStreets(list) {
+  // `fit` false leaves the camera put — used for live slider tweaks so the map
+  // re-ranks in place instead of flying around on every drag.
+  function showStreets(list, fit = true, pad) {
     const map = mapRef.current;
     if (!map || !map.getSource('candidates')) return;
     clearHighlights();
     const feats = list.map(r => r.feature);
     map.getSource('candidates').setData({ type: 'FeatureCollection', features: feats });
     map.getSource('candidates-heat').setData(densifyToPoints(feats));
-    fitTo(feats);
+    if (fit) fitTo(feats, pad);
+  }
+  // Build a ~circle polygon (32 pts) of radius `radiusM` around a [lng,lat] — used
+  // to give legal-dong POINTS a neighbourhood-scale "zone" to tint + fit to.
+  function circleAround([lng, lat], radiusM) {
+    const dLat = radiusM / 111320;
+    const dLng = radiusM / (111320 * Math.cos(lat * Math.PI / 180));
+    const ring = [];
+    for (let i = 0; i <= 32; i++) {
+      const a = (i / 32) * 2 * Math.PI;
+      ring.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)]);
+    }
+    return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } };
+  }
+  // NEIGHBOURHOOD highlight: tint the area + outline it, then fit the camera to it.
+  // No street list — the user just asked to see the area. Legal-dong POINTS get a
+  // neighbourhood-scale circle; the four 행정동 POLYGONS keep their real outline.
+  function showDong(feature) {
+    const map = mapRef.current;
+    if (!map || !map.getSource('dong-region')) return;
+    clearHighlights();
+    const region = feature.geometry && feature.geometry.type === 'Point'
+      ? circleAround(feature.geometry.coordinates, 230)
+      : feature;
+    map.getSource('dong-region').setData({ type: 'FeatureCollection', features: [region] });
+    fitTo([region], { top: 100, bottom: 90, left: 40, right: 40 });
   }
   // NATURE highlight (nature category): draw the recommended walks as green
   // routes and fit the view to them.
@@ -1109,11 +1369,12 @@ function RealMapScreen() {
     if (!map || !map.getSource('green-cand')) return;
     clearHighlights();
     map.getSource('green-cand').setData({ type: 'FeatureCollection', features: list.map(r => r.feature) });
+    setNatureBubbles(list);                 // green name bubbles on each walk
     fitTo(list.map(r => r.feature));
   }
   // BOTH at once (vibe with Park requested): cobalt streets + green park walks on
   // the same view, fitted to their union. One clear so neither wipes the other.
-  function showBoth(streetList, natureList) {
+  function showBoth(streetList, natureList, fit = true, pad) {
     const map = mapRef.current;
     if (!map || !map.getSource('candidates') || !map.getSource('green-cand')) return;
     clearHighlights();
@@ -1121,7 +1382,8 @@ function RealMapScreen() {
     map.getSource('candidates').setData({ type: 'FeatureCollection', features: streetFeats });
     map.getSource('candidates-heat').setData(densifyToPoints(streetFeats));
     map.getSource('green-cand').setData({ type: 'FeatureCollection', features: natureList.map(r => r.feature) });
-    fitTo([...streetList, ...natureList].map(r => r.feature));
+    setNatureBubbles(natureList);           // green name bubbles on each walk
+    if (fit) fitTo([...streetList, ...natureList].map(r => r.feature), pad);
   }
 
   // ROUTE highlight: draw the walk line and fit the view to it.
@@ -1173,27 +1435,45 @@ function RealMapScreen() {
   // Back to the vibe street list from the options / a drawn route.
   function backToStreets() { if (routeTargetRef.current) runVibe(); else clearSearch(); }
 
-  function runVibe() {
+  // Rank + draw for a given vibe target. `fit` false keeps the camera still, so
+  // dragging the in-map sliders re-ranks the heat cloud in place (live preview).
+  // Fit insets used while the sliders panel is open: reserve the top for the panel
+  // and only the collapsed sheet peek + tab bar at the bottom, so the highlighted
+  // streets land in the visible strip below the panel.
+  const VIBE_SLIDERS_FIT_PAD = { top: 400, bottom: 140, left: 36, right: 36 };
+  function runVibeWithTarget(target, fit = true, pad) {
     // rank streets on all active axes; if the user leans toward PARK, also surface
     // the actual park WALKS (nature-paths) — the paths INSIDE parks aren't named
     // streets, so they can only come from that layer. Walks listed first (they ARE
     // the parks), then the vibe-ranked streets.
-    const target = readVibeTarget();
     const streets = rankByVibe(target, vibeFeats.current);
-    const wantPark = target.park != null && target.park > 0;
+    const wantPark = greenModeRef.current === 'park';   // the "Park" greenery button
     const walks = wantPark ? resolveNature(natureFeats.current) : [];
     const list = [...walks, ...streets];
     setKind('vibe'); setTitle('Matching your vibe'); setResults(list);
-    setSelected(null); setSheetOpen(true);
+    setSelected(null);
     // remember what to join into a walk (the ranked STREETS, not the park walks)
     routeTargetRef.current = Object.keys(target).length ? target : null;
     setVibeStreets(streets); setWalkOptions(null);
-    if (wantPark && walks.length) showBoth(streets, walks); else showStreets(streets);
-    if (!list.length) setStatus('No vibe scores loaded for these streets yet.');
+    if (wantPark && walks.length) showBoth(streets, walks, fit, pad); else showStreets(streets, fit, pad);
+    setStatus(list.length ? '' : 'No vibe scores loaded for these streets yet.');
+  }
+  // The "✦ My vibe" chip: rank from the persisted sliders AND reveal the compact
+  // in-map sliders. Collapse the results sheet so the map stays visible between the
+  // panel (top) and the sheet peek (bottom) while the user tunes the vibe.
+  function runVibe() {
+    greenModeRef.current = readGreenMode();
+    runVibeWithTarget(readVibeTarget(), true, VIBE_SLIDERS_FIT_PAD);
+    setShowSliders(true); setSheetOpen(false);
+  }
+  // Live re-rank as the in-map sliders move — no camera refit (fit=false).
+  function onVibeSlidersChange(vals, off, greenMode) {
+    greenModeRef.current = greenMode;
+    runVibeWithTarget(targetFromSliders(vals, off, greenMode), false);
   }
   // preset vibe chips — a fixed target instead of the live sliders.
   function runPreset(p) {
-    setQuery('');
+    setQuery(''); setShowSliders(false);
     if (p.nature) {                       // "Quiet nature" → the walks, calmest first
       resetWalk();
       const list = resolveNature(natureFeats.current, { quiet: true });
@@ -1211,7 +1491,7 @@ function RealMapScreen() {
   }
   // one entry point for every chip — routes green vs commerce categories.
   function runCategory(cat) {
-    setQuery(''); resetWalk();
+    setQuery(''); resetWalk(); setShowSliders(false);
     if (cat.kind === 'green') {
       const list = resolveNature(natureFeats.current);
       setKind('cat:' + cat.id); setTitle(`${cat.emoji} ${cat.label}`);
@@ -1225,7 +1505,18 @@ function RealMapScreen() {
     setResults(list); setSelected(null); setSheetOpen(true); showStreets(list);
   }
   function runFreeText(q) {
-    resetWalk();
+    resetWalk(); setShowSliders(false); setStatus('');
+    // NEIGHBOURHOOD first — an exact dong name / alias ("삼청동", "Bukchon") zooms
+    // to the area rather than listing streets (a street like "인사동길" won't match
+    // the exact-token test, so it still falls through to the street search below).
+    const dong = matchDong(q, dongFeats.current);
+    if (dong) {
+      const p = dong.properties;
+      setKind('dong'); setTitle(''); setResults([]); setSelected(null); setSheetOpen(false);
+      setStatus(`📍 ${p.name}${p.name_en ? ' · ' + p.name_en : ''}`);
+      showDong(dong);
+      return;
+    }
     const cats = matchCategories(q);
     const commerce = cats.filter(c => c.kind !== 'green');
     const green = cats.find(c => c.kind === 'green');
@@ -1243,7 +1534,7 @@ function RealMapScreen() {
   }
   function clearSearch() {
     setQuery(''); setKind(null); setTitle(''); setResults([]); setSelected(null);
-    setRouteStats(null); resetWalk();
+    setRouteStats(null); resetWalk(); setShowSliders(false); setStatus('');
     clearHighlights();
   }
 
@@ -1323,7 +1614,12 @@ function RealMapScreen() {
   return (
     <div style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden', background: 'var(--map-land)' }}>
       {/* the map fills the screen (kept mounted even on the Local-favorite tab) */}
-      <div ref={mapEl} style={{ position: 'absolute', inset: 0 }} />
+      {/* lift the bottom-right zoom + (i) attribution clear of the tab bar so they
+          aren't clipped — scoped to THIS map so the Local-favorite map (whose frame
+          already stops above the bar) isn't shifted twice. */}
+      <style>{`.rms-searchmap .maplibregl-ctrl-bottom-right,
+               .rms-searchmap .maplibregl-ctrl-bottom-left { bottom: ${MAP_TAB_H}px; }`}</style>
+      <div ref={mapEl} className="rms-searchmap" style={{ position: 'absolute', inset: 0 }} />
 
       {/* search overlay, pinned to the top — Search tab only */}
       {tab === 'search' && (
@@ -1331,6 +1627,9 @@ function RealMapScreen() {
         <SearchBar query={query} setQuery={setQuery} onSubmit={runFreeText} onClear={clearSearch}
           hasResults={results.length > 0} />
         <ChipRow activeKind={kind} onVibe={runVibe} onPreset={runPreset} onCategory={runCategory} />
+        {/* compact live vibe sliders — opened by the "✦ My vibe" chip */}
+        {showSliders && <VibeSlidersPanel onVibeChange={onVibeSlidersChange}
+          onClose={() => { setShowSliders(false); setSheetOpen(true); }} />}
         {status && <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)',
           background: 'var(--card)', borderRadius: t.radiusSm, padding: '5px 10px', display: 'inline-block', boxShadow: 'var(--shadow)' }}>{status}</div>}
       </div>

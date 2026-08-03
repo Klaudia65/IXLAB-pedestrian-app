@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chemins dans les parcs</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{ --font:'Segoe UI',system-ui,-apple-system,sans-serif; --ink:#1d2230; --ink-soft:#6b7280;
+         --line:#e6e6e2; --card:#ffffffee; --green:#1f8a4c; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;font-family:var(--font);color:var(--ink);}
+  #map{position:absolute;inset:0;}
+
+  .panel{position:absolute;top:14px;left:14px;z-index:5;width:280px;max-width:calc(100vw - 28px);
+    background:var(--card);backdrop-filter:blur(6px);border:1px solid var(--line);
+    border-radius:14px;padding:14px 15px;box-shadow:0 8px 30px rgba(20,25,45,.14);}
+  .panel h1{margin:0 0 3px;font-size:15px;}
+  .panel p{margin:0;font-size:11.5px;color:var(--ink-soft);line-height:1.45;}
+  .count{margin-top:9px;font-size:12px;} .count b{color:var(--green);}
+
+  /* name pill sitting on each park walk */
+  .pill{font:700 11px var(--font);white-space:nowrap;padding:2px 8px;border-radius:20px;
+    background:var(--green);color:#fff;box-shadow:0 2px 8px rgba(20,25,45,.20);
+    transform:translate(-50%,-50%);cursor:pointer;}
+  .pill.restricted{background:#8a8a82;}          /* paid / private / review */
+  .pill .m{font-weight:600;opacity:.85;font-size:10px;}
+
+  .legend{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-soft);}
+  .legend .row{display:flex;align-items:center;gap:7px;margin:3px 0;}
+  .legend .sw{width:20px;height:0;border-top:3px solid var(--green);border-radius:2px;}
+  .legend .sw.grey{border-top:3px dashed #8a8a82;}
+
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:11px;padding:10px 12px;}
+  .maplibregl-popup-content h4{margin:0 0 4px;font-size:14px;}
+  .maplibregl-popup-content .meta{color:var(--ink-soft);}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>Chemins dans les parcs</h1>
+  <p>Les itinéraires piétons qui traversent réellement un parc — pas les rues qui
+     le longent. Fond neutre&nbsp;: seul le vrai vert marchable est en vert.</p>
+  <div class="count" id="count">…</div>
+  <div class="legend">
+    <div class="row"><span class="sw"></span> public &amp; gratuit — <b>payant/privé retirés (OSM)</b></div>
+  </div>
+</div>
+
+<script>
+const map = new maplibregl.Map({
+  container:'map',
+  style:{ version:8,
+    sources:{ base:{ type:'raster',
+      tiles:['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+             'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+      tileSize:256, attribution:'© OpenStreetMap · © CARTO' } },
+    layers:[{ id:'base', type:'raster', source:'base' }] },
+  center:[126.994,37.576], zoom:13.2,
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}),'bottom-right');
+
+const centroid = f => { const b=new maplibregl.LngLatBounds();
+  const walk=g=>g.forEach(c=>Array.isArray(c[0])?walk(c):b.extend(c)); walk(f.geometry.coordinates);
+  return b.getCenter(); };
+
+map.on('load', async () => {
+  // 1) park polygons — faint green context (so the walks read as "inside a park")
+  const green = await (await fetch('green-jongno.geojson')).json();
+  map.addSource('green', { type:'geojson', data:green });
+  map.addLayer({ id:'green-fill', type:'fill', source:'green',
+    paint:{ 'fill-color':'#a6e0bd', 'fill-opacity':0.35 } });
+  map.addLayer({ id:'green-line', type:'line', source:'green',
+    paint:{ 'line-color':'#7cc79a', 'line-width':0.8, 'line-opacity':0.6 } });
+
+  // 2) the nature-paths — public walks in green, paid/private greyed & dashed.
+  //    access_class comes from OSM (offline/nature_paths_access.py): a walk is only
+  //    green if its park is public & free — no ticket gate, no private garden.
+  //    Paid/private parks are REMOVED (verified via OSM, offline/nature_paths_access.py):
+  //    only public & free walks remain on the map.
+  const raw = await (await fetch('nature-paths-jongno.geojson', { cache:'no-store' })).json();
+  const isPublic = f => !['paid','private','review'].includes(f.properties.access_class);
+  const nRemoved = raw.features.length - raw.features.filter(isPublic).length;
+  const walks = { type:'FeatureCollection', features: raw.features.filter(isPublic) };
+
+  map.addSource('walks', { type:'geojson', data:walks });
+  map.addLayer({ id:'walks-halo', type:'line', source:'walks',
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{ 'line-color':'#ffffff', 'line-width':6, 'line-opacity':0.9 } });
+  map.addLayer({ id:'walks-line', type:'line', source:'walks',
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{ 'line-color':'#1f8a4c', 'line-width':3.4 } });
+
+  document.getElementById('count').innerHTML =
+    `<b>${walks.features.length}</b> chemins publics` +
+    (nRemoved ? ` · <span style="color:#8a8a82">${nRemoved} payant/privé retiré${nRemoved>1?'s':''}</span>` : '');
+
+  // one green name-pill per public walk
+  walks.features.forEach(f => {
+    const p = f.properties;
+    const el = document.createElement('div'); el.className = 'pill';
+    el.innerHTML = `${p.name} <span class="m">${(p.path_m/1000).toFixed(1)}&nbsp;km</span>`;
+    el.onclick = () => new maplibregl.Popup({offset:10}).setLngLat(centroid(f)).setHTML(
+      `<h4>${p.name}</h4><div class="meta">${p.type_label} · ${p.path_m} m · ${p.quiet_label}</div>`
+    ).addTo(map);
+    new maplibregl.Marker({element:el}).setLngLat(centroid(f)).addTo(map);
+  });
+
+  const b = new maplibregl.LngLatBounds();
+  walks.features.forEach(f => { const w=g=>g.forEach(c=>Array.isArray(c[0])?w(c):b.extend(c)); w(f.geometry.coordinates); });
+  map.fitBounds(b, { padding:{top:40,right:40,bottom:40,left:310}, duration:0 });
+});
+</script>
+</body>
+</html>

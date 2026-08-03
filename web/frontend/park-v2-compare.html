@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Axe vert — ancien vs v2</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --font:'Segoe UI',system-ui,-apple-system,sans-serif;
+    --ink:#1d2230; --ink-soft:#6b7280; --line:#e6e6e2; --card:#ffffffee;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;font-family:var(--font);color:var(--ink);}
+  #map{position:absolute;inset:0;}
+
+  /* --- floating control / story panel (top-left) --- */
+  .panel{position:absolute;top:14px;left:14px;z-index:5;width:310px;max-width:calc(100vw - 28px);
+    background:var(--card);backdrop-filter:blur(6px);border:1px solid var(--line);
+    border-radius:14px;padding:14px 15px;box-shadow:0 8px 30px rgba(20,25,45,.14);}
+  .panel h1{margin:0 0 2px;font-size:15px;letter-spacing:-.2px;}
+  .panel .subtitle{margin:0 0 11px;font-size:11.5px;color:var(--ink-soft);line-height:1.45;}
+
+  .modes{display:flex;gap:6px;margin-bottom:11px;}
+  .modes button{flex:1;padding:7px 4px;font:600 12px var(--font);cursor:pointer;
+    border:1px solid var(--line);background:#fff;color:var(--ink-soft);border-radius:9px;transition:.12s;}
+  .modes button:hover{border-color:#c9cbd0;}
+  .modes button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+  .legend{font-size:11px;color:var(--ink-soft);}
+  .legend .bar{height:11px;border-radius:6px;margin:5px 0 4px;}
+  .legend .ends{display:flex;justify-content:space-between;font-weight:600;color:var(--ink);}
+  .legend .note{margin-top:7px;line-height:1.4;}
+
+  .stats{margin-top:12px;padding-top:11px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.5;}
+  .stats b{color:var(--ink);}
+  .stats .row{display:flex;justify-content:space-between;gap:8px;}
+  .stats .k{color:var(--ink-soft);} .stats .v{font-weight:700;font-variant-numeric:tabular-nums;}
+
+  /* --- name pills for the top movers --- */
+  .pill{font:700 10.5px var(--font);white-space:nowrap;padding:2px 7px;border-radius:20px;
+    box-shadow:0 2px 8px rgba(20,25,45,.18);transform:translate(-50%,-140%);pointer-events:none;}
+  .pill.up{background:#12657f;color:#fff;} .pill.down{background:#b23b30;color:#fff;}
+
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:11px;padding:11px 13px;max-width:240px;}
+  .maplibregl-popup-content h4{margin:0 0 6px;font-size:14px;}
+  .pop-row{display:flex;justify-content:space-between;gap:12px;margin:2px 0;}
+  .pop-row .k{color:var(--ink-soft);} .pop-row .v{font-weight:700;font-variant-numeric:tabular-nums;}
+  .pop-tier{margin-top:7px;padding-top:6px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-soft);}
+  .pop-tier b{color:var(--ink);}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel">
+  <h1>Axe vert — ancien vs v2</h1>
+  <p class="subtitle">307 rues de Jongno. L'ancien axe = bande binaire à 30&nbsp;m
+    (<code>2·frac−1</code>). La v2 = canopée continue → traversée réelle d'un parc.</p>
+
+  <div class="modes">
+    <button data-mode="old">Ancien</button>
+    <button data-mode="v2" class="on">v2</button>
+    <button data-mode="delta">Δ changement</button>
+  </div>
+
+  <div class="legend">
+    <div class="ends" id="leg-ends"><span>—</span><span>—</span></div>
+    <div class="bar" id="leg-bar"></div>
+    <div class="note" id="leg-note"></div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+</div>
+
+<script>
+const PREVIEW = 'park-v2-preview-jongno.geojson';
+
+// --- colour ramps --------------------------------------------------------
+// Sequential grey→green for a score in [-1,+1]: "no green" grey → deep green.
+const RAMP_SCORE = (prop) => ['interpolate', ['linear'], ['get', prop],
+  -1,   '#dcdcd7',   // not green — warm grey
+  -0.4, '#cfe0b8',
+   0,   '#9ccb70',
+   0.5, '#4ca85e',
+   1,   '#137a41'];  // traverses a park — deep green
+// Diverging for the change (v2 − old): demoted (faux positives) red ↔ promoted teal.
+const RAMP_DELTA = ['interpolate', ['linear'], ['get', 'delta'],
+  -1.4, '#b23b30',   // lost its green status (wall-huggers)
+  -0.15,'#ecc9c4',
+   0,   '#eeeeea',
+   0.15,'#c4dbe4',
+   1.4, '#12657f'];  // gained green status (real park streets)
+
+const MODES = {
+  old:   { prop:'park_old', ramp:()=>RAMP_SCORE('park_old'),
+           ends:['pas vert (−1)','le long d’un parc (+1)'],
+           bar:'linear-gradient(90deg,#dcdcd7,#cfe0b8,#9ccb70,#4ca85e,#137a41)',
+           note:'La bande binaire : presque toutes les rues écrasées vers le gris (72&nbsp;% dans [−1;−0,75)).' },
+  v2:    { prop:'park_v2', ramp:()=>RAMP_SCORE('park_v2'),
+           ends:['canopée faible (−1)','traverse un parc (+1)'],
+           bar:'linear-gradient(90deg,#dcdcd7,#cfe0b8,#9ccb70,#4ca85e,#137a41)',
+           note:'Canopée continue → le dégradé se déplie ; le sommet = vraies rues-à-travers-parc.' },
+  delta: { prop:'delta', ramp:()=>RAMP_DELTA,
+           ends:['démotée','promue'],
+           bar:'linear-gradient(90deg,#b23b30,#ecc9c4,#eeeeea,#c4dbe4,#12657f)',
+           note:'Rouge = notait vert en longeant un mur, corrigée (ex. 청와대로). Bleu = vraie rue verte enfin reconnue.' },
+};
+
+const TIER_LABEL = { 0:'canopée (arbres de rue)', 1:'traverse un parc', 2:'traverse un grand parc (destination)' };
+
+const map = new maplibregl.Map({
+  container:'map',
+  style:{ version:8,
+    sources:{ base:{ type:'raster',
+      tiles:['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+             'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+      tileSize:256, attribution:'© OpenStreetMap · © CARTO' } },
+    layers:[{ id:'base', type:'raster', source:'base' }] },
+  center:[126.994,37.576], zoom:13.2,
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}),'bottom-right');
+
+let currentMode = 'v2';
+
+function setMode(mode){
+  currentMode = mode;
+  const m = MODES[mode];
+  map.setPaintProperty('streets','line-color', m.ramp());
+  document.querySelectorAll('.modes button').forEach(b=>b.classList.toggle('on', b.dataset.mode===mode));
+  document.getElementById('leg-ends').innerHTML = `<span>${m.ends[0]}</span><span>${m.ends[1]}</span>`;
+  document.getElementById('leg-bar').style.background = m.bar;
+  document.getElementById('leg-note').innerHTML = m.note;
+}
+
+map.on('load', async () => {
+  const gj = await (await fetch(PREVIEW)).json();
+
+  // precompute the change per feature + collect movers/bounds
+  const b = new maplibregl.LngLatBounds();
+  gj.features.forEach(f => {
+    const p = f.properties;
+    p.delta = +(p.park_v2 - p.park_old).toFixed(3);
+    const walk = g => g.forEach(c => Array.isArray(c[0]) ? walk(c) : b.extend(c));
+    walk(f.geometry.coordinates);
+  });
+
+  map.addSource('streets', { type:'geojson', data:gj });
+  map.addLayer({ id:'halo', type:'line', source:'streets',
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':'#ffffff','line-width':6,'line-opacity':.9} });
+  map.addLayer({ id:'streets', type:'line', source:'streets',
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':RAMP_SCORE('park_v2'),'line-width':3.4} });
+
+  map.fitBounds(b, { padding:{top:40,right:40,bottom:40,left:340}, duration:0 });
+
+  // --- name pills for the biggest movers (the story at a glance) ----------
+  const feats = gj.features.slice();
+  const centroid = f => { const b2=new maplibregl.LngLatBounds();
+    const walk=g=>g.forEach(c=>Array.isArray(c[0])?walk(c):b2.extend(c)); walk(f.geometry.coordinates);
+    return b2.getCenter(); };
+  const realStreets = feats.filter(f=>f.properties.is_street!==false);  // hide 청계천 stairs/ladders
+  const losers  = realStreets.filter(f=>f.properties.park_old>0).sort((a,z)=>a.properties.delta-z.properties.delta).slice(0,4);
+  const gainers = realStreets.slice().sort((a,z)=>z.properties.delta-a.properties.delta).slice(0,4);
+  const seen = new Set();
+  [['down',losers],['up',gainers]].forEach(([dir,list])=>list.forEach(f=>{
+    if(seen.has(f.properties.name)) return; seen.add(f.properties.name);
+    const el=document.createElement('div'); el.className='pill '+dir; el.textContent=f.properties.name;
+    new maplibregl.Marker({element:el}).setLngLat(centroid(f)).addTo(map);
+  }));
+
+  // --- click popup: old vs v2 + why --------------------------------------
+  map.on('click','streets', e=>{
+    const p=e.features[0].properties;
+    const fmt=v=>(v>=0?'+':'')+(+v).toFixed(2);
+    new maplibregl.Popup({offset:8}).setLngLat(e.lngLat).setHTML(
+      `<h4>${p.name||'(sans nom)'}</h4>
+       <div class="pop-row"><span class="k">ancien</span><span class="v">${fmt(p.park_old)}</span></div>
+       <div class="pop-row"><span class="k">v2</span><span class="v">${fmt(p.park_v2)}</span></div>
+       <div class="pop-row"><span class="k">Δ</span><span class="v">${fmt(p.delta)}</span></div>
+       <div class="pop-tier"><b>${TIER_LABEL[p.tier]}</b><br>
+         canopée ${(+p.canopy).toFixed(2)} · traverse ${(+p.traverse).toFixed(2)}
+         ${p.access?('· '+p.access):''}</div>`
+    ).addTo(map);
+  });
+  map.on('mouseenter','streets',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','streets',()=>map.getCanvas().style.cursor='');
+
+  // --- headline stats -----------------------------------------------------
+  const arr = k => feats.map(f=>f.properties[k]);
+  const pct = (a,f)=> (100*a.filter(f).length/a.length).toFixed(0);
+  const distinct = a => new Set(a.map(v=>Math.round(v*1000))).size;
+  const oldv=arr('park_old'), v2=arr('park_v2');
+  const cwd = feats.find(f=>f.properties.name==='청와대로')?.properties;
+  const cwdStr = cwd ? `${(cwd.park_old>=0?'+':'')}${cwd.park_old.toFixed(2)} → ${(cwd.park_v2>=0?'+':'')}${cwd.park_v2.toFixed(2)}` : 'n/a';
+  document.getElementById('stats').innerHTML =
+    `<div class="row"><span class="k">rues à exactement −1</span>
+        <span class="v">${pct(oldv,v=>Math.abs(v+1)<1e-9)}% → ${pct(v2,v=>Math.abs(v+1)<1e-9)}%</span></div>
+     <div class="row"><span class="k">écrasées dans le tiers bas (≤ −0.34)</span>
+        <span class="v">${pct(oldv,v=>v<=-0.34)}% → ${pct(v2,v=>v<=-0.34)}%</span></div>
+     <div class="row"><span class="k">valeurs distinctes</span>
+        <span class="v">${distinct(oldv)} → ${distinct(v2)}</span></div>
+     <div class="row"><span class="k">청와대로 (경복궁 exclu du vert)</span>
+        <span class="v">${cwdStr}</span></div>`;
+
+  document.querySelectorAll('.modes button').forEach(btn=>btn.onclick=()=>setMode(btn.dataset.mode));
+  setMode('v2');
+});
+</script>
+</body>
+</html>

@@ -90,27 +90,49 @@ def _percentile_scores(values: np.ndarray) -> np.ndarray:
     Percentile (rank) rather than min-max because 생활인구 has heavy outliers near
     big attractions that would otherwise squash every other street toward one end.
     A street at the median lands near 0; the quietest -> -1, the liveliest -> +1.
+
+    Ties get the MID-RANK (average position), so equal inputs map to the SAME score.
+    This matters for zero-inflated signals like the chain share, where the many
+    chain-free streets must all land at one value rather than being spread across the
+    bottom by an arbitrary tie-break (which would invent differences that aren't real).
     """
     out = np.full(len(values), np.nan)
     obs = ~np.isnan(values)
     n = int(obs.sum())
     if n == 0:
         return out
-    ranks = values[obs].argsort().argsort()          # 0..n-1, ties broken arbitrarily
-    pct = (ranks + 0.5) / n                            # (0,1), midpoint convention
+    v = values[obs]
+    order = np.argsort(v, kind="mergesort")            # stable, so groups are contiguous
+    sv = v[order]
+    ranks = np.empty(n)
+    i = 0
+    while i < n:                                        # average rank within each tie group
+        j = i
+        while j + 1 < n and sv[j + 1] == sv[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0           # 0-based mid-rank
+        i = j + 1
+    pct = (ranks + 0.5) / n                             # (0,1), midpoint convention
     out[obs] = np.round(pct * 2 - 1, 3)
     return out
 
 
-def _median_agg_per_street(streets_m, segments_m):
-    """Median of observed `agg_value` over each street's own segments (NaN if none)."""
+def _agg_per_street(streets_m, segments_m, how="median"):
+    """Aggregate observed `agg_value` over each street's own segments (NaN if none).
+
+    `how` picks the reducer: "median" for the smooth 생활인구 signal, "mean" for a
+    sparse, zero-inflated signal like the chain share (see local_chain below) where
+    the median would collapse to 0 on any street that isn't majority-chain and throw
+    away the real presence of a few chains along it.
+    """
     seg = segments_m[segments_m["is_observed"] == True].copy()  # noqa: E712 (geopandas mask)
     buffered = streets_m.copy()
     buffered["geometry"] = buffered.geometry.buffer(STREET_BUFFER_M)
     joined = gpd.sjoin(seg[["agg_value", "geometry"]], buffered[["_sid", "geometry"]],
                        predicate="intersects", how="inner")
-    med = joined.groupby("_sid")["agg_value"].median()
-    return streets_m["_sid"].map(med).to_numpy(dtype=float)
+    grouped = joined.groupby("_sid")["agg_value"]
+    agg = grouped.mean() if how == "mean" else grouped.median()
+    return streets_m["_sid"].map(agg).to_numpy(dtype=float)
 
 
 def _public_green(green_m):
@@ -146,12 +168,18 @@ def rollup():
     named_m["_sid"] = named_m.index                      # stable key for the joins
 
     # --- quiet_lively: median 생활인구 per street -> percentile -> [-1,+1] (+ = lively)
-    ql_median = _median_agg_per_street(named_m, quiet.to_crs(METRIC_CRS))
+    ql_median = _agg_per_street(named_m, quiet.to_crs(METRIC_CRS), how="median")
     quiet_lively = _percentile_scores(ql_median)
 
-    # --- local_chain: median chain SHARE (0..1) per street -> 2·share-1 (+ = chain)
-    lc_median = _median_agg_per_street(named_m, chain.to_crs(METRIC_CRS))
-    local_chain = np.where(np.isnan(lc_median), np.nan, np.round(lc_median * 2 - 1, 3))
+    # --- local_chain: MEAN chain SHARE (0..1) per street -> percentile -> [-1,+1] (+ = chain)
+    # Chains are a small minority in Jongno (~4% of storefronts), so the share is a
+    # sparse, zero-inflated signal. The old `median·2-1` collapsed ~all streets to -1
+    # (the median segment has no chain), killing the axis. We instead take the MEAN
+    # share (a street's overall chain presence) and PERCENTILE-normalise it, exactly
+    # like quiet_lively — so streets spread across the axis by how chain-heavy they are
+    # RELATIVE to their peers, which is what the app's ranker compares against.
+    lc_mean = _agg_per_street(named_m, chain.to_crs(METRIC_CRS), how="mean")
+    local_chain = _percentile_scores(lc_mean)
 
     # --- park: fraction of length near a PUBLIC park -> 2·frac-1 (+ = near a park)
     green_m = _public_green(green.to_crs(METRIC_CRS))

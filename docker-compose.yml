@@ -14,7 +14,8 @@ services:
                                           # to the wrong server)
     volumes:
       - pgdata:/var/lib/postgresql/data  # data survives container restarts
-      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  # runs on first init
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro   # reference data tables, runs on first init
+      - ./backend/sql/study.sql:/docker-entrypoint-initdb.d/02_study.sql:ro # study/telemetry tables, runs on first init
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lab_user -d explore"]
       interval: 5s
@@ -31,6 +32,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://lab_user:ixlab6531@db:5432/explore
       DEBUG: "true"
       VECTOR_DIM: "64"
+      # shared key the app must send (X-Study-Key) to write study data.
+      # dev value; change it to a real secret before deploying publicly.
+      STUDY_WRITE_KEY: "dev-study-key-change-me"
     ports:
       - "8000:8000"
     depends_on:

@@ -1,0 +1,464 @@
+{
+  "axes": [
+    [
+      "touristy_local",
+      "Touristy",
+      "Local"
+    ],
+    [
+      "historic_contemporary",
+      "Historic",
+      "Contemporary"
+    ],
+    [
+      "raw_polished",
+      "Raw",
+      "Polished"
+    ],
+    [
+      "quiet_lively",
+      "Quiet",
+      "Lively"
+    ],
+    [
+      "local_chain",
+      "Independent",
+      "Chain"
+    ],
+    [
+      "park",
+      "No park",
+      "By a park"
+    ]
+  ],
+  "snap_max_m": 40,
+  "images": [
+    {
+      "id": "1325942799377316",
+      "lon": 126.99383666667,
+      "lat": 37.578116666667,
+      "captured_at": 1775099771000,
+      "compass_angle": 90,
+      "is_pano": false,
+      "image": "images/1325942799377316.jpg",
+      "view": null,
+      "street": null,
+      "street_dist_m": 186.9,
+      "n_blogs": null,
+      "scores": null
+    },
+    {
+      "id": "913715791647553",
+      "lon": 126.98649666667,
+      "lat": 37.583153333333,
+      "captured_at": 1775102406000,
+      "compass_angle": 9.0865344027015,
+      "is_pano": false,
+      "image": "images/913715791647553.jpg",
+      "view": null,
+      "street": "창덕궁길",
+      "street_dist_m": 2.7,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": -0.2,
+        "historic_contemporary": 0.333,
+        "raw_polished": null,
+        "quiet_lively": -0.388,
+        "local_chain": -1.0,
+        "park": -0.335
+      }
+    },
+    {
+      "id": "1247534357595968",
+      "lon": 126.98956333333,
+      "lat": 37.575958333333,
+      "captured_at": 1775096528000,
+      "compass_angle": 331.26751710113,
+      "is_pano": false,
+      "image": "images/1247534357595968.jpg",
+      "view": null,
+      "street": "삼일대로32길",
+      "street_dist_m": 2.0,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.5,
+        "historic_contemporary": -0.333,
+        "raw_polished": 1.0,
+        "quiet_lively": 0.525,
+        "local_chain": -1.0,
+        "park": -0.906
+      }
+    },
+    {
+      "id": "229147956344960",
+      "lon": 126.9932247,
+      "lat": 37.5725845,
+      "captured_at": 1679789977660,
+      "compass_angle": 62.064480781555,
+      "is_pano": false,
+      "image": "images/229147956344960.jpg",
+      "view": null,
+      "street": "돈화문로10길",
+      "street_dist_m": 3.9,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 1.0,
+        "historic_contemporary": -1.0,
+        "raw_polished": null,
+        "quiet_lively": 0.943,
+        "local_chain": -1.0,
+        "park": -0.824
+      }
+    },
+    {
+      "id": "178230961726166",
+      "lon": 126.9956849,
+      "lat": 37.571999700001,
+      "captured_at": 1679790317697,
+      "compass_angle": 96.064428329468,
+      "is_pano": false,
+      "image": "images/178230961726166.jpg",
+      "view": null,
+      "street": null,
+      "street_dist_m": 56.3,
+      "n_blogs": null,
+      "scores": null
+    },
+    {
+      "id": "1778692433102699",
+      "lon": 126.98667833333,
+      "lat": 37.5802,
+      "captured_at": 1775104085000,
+      "compass_angle": 189.16146458583,
+      "is_pano": false,
+      "image": "images/1778692433102699.jpg",
+      "view": null,
+      "street": "계동길",
+      "street_dist_m": 5.4,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.5,
+        "historic_contemporary": -0.333,
+        "raw_polished": null,
+        "quiet_lively": -0.251,
+        "local_chain": -1.0,
+        "park": -0.975
+      }
+    },
+    {
+      "id": "830806842673657",
+      "lon": 126.986855,
+      "lat": 37.581528333333,
+      "captured_at": 1775102631000,
+      "compass_angle": 91.074012703673,
+      "is_pano": false,
+      "image": "images/830806842673657.jpg",
+      "view": null,
+      "street": "계동길",
+      "street_dist_m": 4.0,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.5,
+        "historic_contemporary": -0.333,
+        "raw_polished": null,
+        "quiet_lively": -0.251,
+        "local_chain": -1.0,
+        "park": -0.975
+      }
+    },
+    {
+      "id": "1175838890376715",
+      "lon": 126.9793417,
+      "lat": 37.567898530922,
+      "captured_at": 1701212406006,
+      "compass_angle": 0,
+      "is_pano": true,
+      "image": "images/1175838890376715.jpg",
+      "view": "images/1175838890376715_view.jpg",
+      "street": "다동길",
+      "street_dist_m": 1.9,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": -1.0,
+        "raw_polished": 0.333,
+        "quiet_lively": null,
+        "local_chain": -0.929,
+        "park": -0.511
+      }
+    },
+    {
+      "id": "1006270133801651",
+      "lon": 126.97854770886,
+      "lat": 37.571574875124,
+      "captured_at": 1701498422577,
+      "compass_angle": 187.12741344131,
+      "is_pano": false,
+      "image": "images/1006270133801651.jpg",
+      "view": null,
+      "street": null,
+      "street_dist_m": 65.8,
+      "n_blogs": null,
+      "scores": null
+    },
+    {
+      "id": "642883701849178",
+      "lon": 126.9980377,
+      "lat": 37.5694207,
+      "captured_at": 1749970627000,
+      "compass_angle": 344.346,
+      "is_pano": true,
+      "image": "images/642883701849178.jpg",
+      "view": "images/642883701849178_view.jpg",
+      "street": "창경궁로",
+      "street_dist_m": 11.2,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": 0.2,
+        "raw_polished": 1.0,
+        "quiet_lively": 0.175,
+        "local_chain": -1.0,
+        "park": -0.757
+      }
+    },
+    {
+      "id": "1973956346681852",
+      "lon": 126.9979816,
+      "lat": 37.5696429,
+      "captured_at": 1749970647000,
+      "compass_angle": 344.779,
+      "is_pano": true,
+      "image": "images/1973956346681852.jpg",
+      "view": "images/1973956346681852_view.jpg",
+      "street": "창경궁로",
+      "street_dist_m": 6.8,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": 0.2,
+        "raw_polished": 1.0,
+        "quiet_lively": 0.175,
+        "local_chain": -1.0,
+        "park": -0.757
+      }
+    },
+    {
+      "id": "26581196581506509",
+      "lon": 126.99098333333,
+      "lat": 37.568296666667,
+      "captured_at": 1775109952000,
+      "compass_angle": 174.96325678497,
+      "is_pano": false,
+      "image": "images/26581196581506509.jpg",
+      "view": null,
+      "street": "수표교 진출입 계단 9번",
+      "street_dist_m": 6.2,
+      "n_blogs": 14,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": -1.0,
+        "raw_polished": null,
+        "quiet_lively": null,
+        "local_chain": -1.0,
+        "park": 0.0
+      }
+    },
+    {
+      "id": "1305602044901844",
+      "lon": 126.9966775,
+      "lat": 37.5664529,
+      "captured_at": 1749970179000,
+      "compass_angle": 80.452,
+      "is_pano": true,
+      "image": "images/1305602044901844.jpg",
+      "view": "images/1305602044901844_view.jpg",
+      "street": "을지로",
+      "street_dist_m": 5.4,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": -1.0,
+        "historic_contemporary": -1.0,
+        "raw_polished": 1.0,
+        "quiet_lively": null,
+        "local_chain": -1.0,
+        "park": -0.396
+      }
+    },
+    {
+      "id": "1281347694160990",
+      "lon": 127.0106202,
+      "lat": 37.5750964,
+      "captured_at": 1779161391000,
+      "compass_angle": 354.873,
+      "is_pano": true,
+      "image": "images/1281347694160990.jpg",
+      "view": "images/1281347694160990_view.jpg",
+      "street": null,
+      "street_dist_m": 43.4,
+      "n_blogs": null,
+      "scores": null
+    },
+    {
+      "id": "1026409559902948",
+      "lon": 127.0098045,
+      "lat": 37.5791646,
+      "captured_at": 1779160523000,
+      "compass_angle": 327.222,
+      "is_pano": true,
+      "image": "images/1026409559902948.jpg",
+      "view": "images/1026409559902948_view.jpg",
+      "street": "창신길",
+      "street_dist_m": 40.0,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 1.0,
+        "historic_contemporary": -1.0,
+        "raw_polished": -1.0,
+        "quiet_lively": -0.875,
+        "local_chain": -1.0,
+        "park": -0.849
+      }
+    },
+    {
+      "id": "1048242196417295",
+      "lon": 126.98030426457,
+      "lat": 37.577754661686,
+      "captured_at": 1701497159673,
+      "compass_angle": 105.95960126933,
+      "is_pano": false,
+      "image": "images/1048242196417295.jpg",
+      "view": null,
+      "street": "삼청로",
+      "street_dist_m": 3.2,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": 0.143,
+        "raw_polished": 1.0,
+        "quiet_lively": -0.091,
+        "local_chain": -1.0,
+        "park": -0.305
+      }
+    },
+    {
+      "id": "1049781256800575",
+      "lon": 126.981542011,
+      "lat": 37.579733362648,
+      "captured_at": 1701566512005,
+      "compass_angle": 255.73858686211,
+      "is_pano": true,
+      "image": "images/1049781256800575.jpg",
+      "view": "images/1049781256800575_view.jpg",
+      "street": "북촌로5길",
+      "street_dist_m": 6.0,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.333,
+        "historic_contemporary": 0.0,
+        "raw_polished": null,
+        "quiet_lively": -0.137,
+        "local_chain": -1.0,
+        "park": -0.543
+      }
+    },
+    {
+      "id": "1048790993702047",
+      "lon": 126.98217834027,
+      "lat": 37.578936555198,
+      "captured_at": 1701566378009,
+      "compass_angle": 104.26126664517,
+      "is_pano": true,
+      "image": "images/1048790993702047.jpg",
+      "view": "images/1048790993702047_view.jpg",
+      "street": "율곡로3길",
+      "street_dist_m": 1.0,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": 0.0,
+        "historic_contemporary": 0.2,
+        "raw_polished": 1.0,
+        "quiet_lively": -0.129,
+        "local_chain": -0.895,
+        "park": -0.526
+      }
+    },
+    {
+      "id": "484763404398318",
+      "lon": 126.97897702775,
+      "lat": 37.580108661402,
+      "captured_at": 1701573344507,
+      "compass_angle": 348.69501239296,
+      "is_pano": true,
+      "image": "images/484763404398318.jpg",
+      "view": "images/484763404398318_view.jpg",
+      "street": null,
+      "street_dist_m": 77.1,
+      "n_blogs": null,
+      "scores": null
+    },
+    {
+      "id": "2119683545535612",
+      "lon": 127.00843055,
+      "lat": 37.572558333333,
+      "captured_at": 1775118114000,
+      "compass_angle": 184.46719908728,
+      "is_pano": false,
+      "image": "images/2119683545535612.jpg",
+      "view": null,
+      "street": "낙산성곽길",
+      "street_dist_m": 16.8,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": -0.2,
+        "historic_contemporary": -1.0,
+        "raw_polished": null,
+        "quiet_lively": -0.722,
+        "local_chain": -1.0,
+        "park": 0.06
+      }
+    },
+    {
+      "id": "919166087769798",
+      "lon": 127.00884166667,
+      "lat": 37.573158333333,
+      "captured_at": 1775117945000,
+      "compass_angle": 356.73336825563,
+      "is_pano": false,
+      "image": "images/919166087769798.jpg",
+      "view": null,
+      "street": "낙산성곽길",
+      "street_dist_m": 8.7,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": -0.2,
+        "historic_contemporary": -1.0,
+        "raw_polished": null,
+        "quiet_lively": -0.722,
+        "local_chain": -1.0,
+        "park": 0.06
+      }
+    },
+    {
+      "id": "1722868688600244",
+      "lon": 126.9884649,
+      "lat": 37.568156,
+      "captured_at": 1749979899000,
+      "compass_angle": 333.234,
+      "is_pano": true,
+      "image": "images/1722868688600244.jpg",
+      "view": "images/1722868688600244_view.jpg",
+      "street": "청계천로",
+      "street_dist_m": 15.2,
+      "n_blogs": 15,
+      "scores": {
+        "touristy_local": -1.0,
+        "historic_contemporary": null,
+        "raw_polished": 1.0,
+        "quiet_lively": 0.342,
+        "local_chain": -1.0,
+        "park": 0.751
+      }
+    }
+  ]
+}

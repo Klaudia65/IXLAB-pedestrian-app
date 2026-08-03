@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verdure — 2 boutons (rue arborée / parc)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --paper:#DFF1F1; --card:#FFFFFF; --card-2:#EAF7F7;
+    --ink:#143229; --ink-soft:#255A4B; --ink-faint:#5E8A7C;
+    --line:rgba(37,90,75,0.16); --accent:#4456FF; --good:#34C38F;
+    --shadow:0 4px 20px rgba(37,90,75,0.12);
+    --font:'Space Grotesk','Segoe UI',system-ui,sans-serif; --mono:'Space Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;font-family:var(--font);color:var(--ink);}
+  #map{position:absolute;inset:0;}
+
+  .panel{position:absolute;top:14px;left:14px;z-index:5;width:290px;max-width:calc(100vw - 28px);
+    background:var(--card);border-radius:20px;box-shadow:var(--shadow);padding:15px 16px;}
+  .vlabel{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+  .vlabel .name{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint);}
+  .drop{width:24px;height:24px;border-radius:50%;border:none;background:var(--card-2);color:var(--ink-faint);
+    cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}
+
+  .seg{display:flex;gap:7px;}
+  .seg button{flex:1;padding:11px 6px;border-radius:12px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-soft);font-family:var(--font);font-weight:700;font-size:13px;cursor:pointer;transition:.12s;
+    display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .seg button .emo{font-size:17px;line-height:1;}
+  .seg button .sub{font-weight:400;font-size:10px;color:var(--ink-faint);}
+  .seg button.sel{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .seg button.sel .sub{color:rgba(255,255,255,.7);}
+
+  .result{margin-top:13px;padding-top:12px;border-top:1px solid var(--line);}
+  .result h2{margin:0 0 8px;font-size:14px;}
+  .list{max-height:40vh;overflow:auto;}
+  .item{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #f0f3f0;font-size:12.5px;cursor:pointer;}
+  .item:first-child{border-top:none;}
+  .item .dot{width:8px;height:8px;border-radius:50%;background:var(--good);flex:none;}
+  .item.walk .dot{border-radius:2px;width:15px;height:4px;background:#137a41;}
+  .item .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .item .val{font-family:var(--mono);font-size:11px;color:var(--ink-faint);}
+
+  .offbox{display:flex;align-items:center;gap:10px;}
+  .addchip{display:inline-flex;align-items:center;gap:7px;padding:9px 14px;border-radius:999px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink-soft);font-weight:700;font-size:13px;cursor:pointer;font-family:var(--font);}
+  .addchip .plus{font-size:17px;line-height:1;color:var(--accent);}
+  .offnote{font-size:11.5px;color:var(--ink-faint);}
+
+  .pill{font:700 11px var(--font);white-space:nowrap;padding:2px 8px;border-radius:20px;background:#137a41;
+    color:#fff;box-shadow:0 2px 8px rgba(20,25,45,.20);transform:translate(-50%,-50%);cursor:pointer;}
+  .pill .m{font-weight:600;opacity:.85;font-size:10px;}
+  .maplibregl-popup-content{font-family:var(--font);font-size:12px;border-radius:11px;padding:9px 12px;}
+  .maplibregl-popup-content h4{margin:0 0 3px;font-size:13px;}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel" id="panel"></div>
+
+<script>
+const map = new maplibregl.Map({
+  container:'map',
+  style:{ version:8, sources:{ base:{ type:'raster',
+      tiles:['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+             'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+      tileSize:256, attribution:'© OpenStreetMap · © CARTO' } },
+    layers:[{ id:'base', type:'raster', source:'base' }] },
+  center:[126.994,37.576], zoom:13.1,
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}),'bottom-right');
+
+const centroid = f => { const b=new maplibregl.LngLatBounds();
+  const w=g=>g.forEach(c=>Array.isArray(c[0])?w(c):b.extend(c)); w(f.geometry.coordinates); return b.getCenter(); };
+const pct = v => Math.round((v+1)/2*100);
+const GREEN_RAMP = ['interpolate',['linear'],['get','park_v2'], 0.2,'#bcd9a0', 0.6,'#57ab5e', 1,'#137a41'];
+const LEAFY_MIN = 0.35;   // park_v2 ≥ this counts as a "rue arborée"
+
+let STREETS = [], WALKS = [], walkMarkers = [];
+const state = { off:false, mode:'street' };   // 'street' | 'park'
+
+Promise.all([
+  fetch('park-v2-preview-jongno.geojson',{cache:'no-store'}).then(r=>r.json()),
+  fetch('nature-paths-jongno.geojson',{cache:'no-store'}).then(r=>r.json()),
+]).then(([s,w])=>{
+  STREETS = s.features.filter(f=>f.properties.is_street!==false);
+  WALKS = w.features.filter(f=>!['paid','private','review'].includes(f.properties.access_class));
+
+  map.on('load', () => {
+    map.addSource('streets', { type:'geojson', data:{type:'FeatureCollection',features:STREETS} });
+    map.addLayer({ id:'streets-base', type:'line', source:'streets',
+      paint:{ 'line-color':'#d9d9d4','line-width':1.4 } });
+    map.addLayer({ id:'streets-green', type:'line', source:'streets', layout:{'line-cap':'round'},
+      filter:['==',['get','name'],'__none__'], paint:{ 'line-color':GREEN_RAMP,'line-width':3.2 } });
+    map.addSource('walks', { type:'geojson', data:{type:'FeatureCollection',features:WALKS} });
+    map.addLayer({ id:'walks-halo', type:'line', source:'walks', layout:{visibility:'none','line-cap':'round'},
+      paint:{ 'line-color':'#fff','line-width':6,'line-opacity':.9 } });
+    map.addLayer({ id:'walks-line', type:'line', source:'walks', layout:{visibility:'none','line-cap':'round'},
+      paint:{ 'line-color':'#137a41','line-width':3.6 } });
+
+    const b=new maplibregl.LngLatBounds();
+    STREETS.forEach(f=>{ const w=g=>g.forEach(c=>Array.isArray(c[0])?w(c):b.extend(c)); w(f.geometry.coordinates); });
+    map.fitBounds(b, { padding:{top:30,right:30,bottom:30,left:320}, duration:0 });
+    render();
+  });
+});
+
+function clearPills(){ walkMarkers.forEach(m=>m.remove()); walkMarkers=[]; }
+function showWalkPills(list){
+  clearPills();
+  list.forEach(f=>{ const p=f.properties; const el=document.createElement('div'); el.className='pill';
+    el.innerHTML=`${p.name} <span class="m">${(p.path_m/1000).toFixed(1)} km</span>`;
+    el.onclick=()=>new maplibregl.Popup({offset:10}).setLngLat(centroid(f))
+      .setHTML(`<h4>${p.name}</h4>${p.type_label} · ${p.path_m} m · ${p.quiet_label}`).addTo(map);
+    walkMarkers.push(new maplibregl.Marker({element:el}).setLngLat(centroid(f)).addTo(map)); });
+}
+
+window.setMode = m => { state.mode=m; render(); };
+window.dropAxis = () => { state.off=true; render(); };
+window.reactivate = () => { state.off=false; render(); };
+
+function render(){
+  const panel = document.getElementById('panel');
+
+  // ---- OFF: axis removed (peu importe) ----
+  if (state.off) {
+    map.setFilter('streets-green', ['==',['get','name'],'__none__']);
+    ['walks-halo','walks-line'].forEach(l=>map.setLayoutProperty(l,'visibility','none'));
+    clearPills();
+    panel.innerHTML = `<div class="vlabel"><span class="name">Verdure</span></div>
+      <div class="offbox"><button class="addchip" onclick="reactivate()"><span class="plus">+</span>Verdure</button>
+        <span class="offnote">axe retiré — peu importe</span></div>`;
+    return;
+  }
+
+  const head = `<div class="vlabel"><span class="name">Verdure</span>
+      <button class="drop" onclick="dropAxis()" title="Peu importe">×</button></div>
+    <div class="seg">
+      <button class="${state.mode==='street'?'sel':''}" onclick="setMode('street')">
+        <span class="emo">🌳</span>Rue arborée<span class="sub">un peu de vert</span></button>
+      <button class="${state.mode==='park'?'sel':''}" onclick="setMode('park')">
+        <span class="emo">🌲</span>Parc<span class="sub">balade en parc</span></button>
+    </div>`;
+
+  // ---- RUE ARBORÉE: leafy streets by canopy ----
+  if (state.mode === 'street') {
+    map.setPaintProperty('streets-green','line-opacity',1);
+    map.setFilter('streets-green', ['all',['!=',['get','is_street'],false],['>=',['get','park_v2'],LEAFY_MIN]]);
+    ['walks-halo','walks-line'].forEach(l=>map.setLayoutProperty(l,'visibility','none'));
+    clearPills();
+    const list = STREETS.filter(f=>f.properties.park_v2>=LEAFY_MIN).sort((a,z)=>z.properties.park_v2-a.properties.park_v2);
+    panel.innerHTML = head + `<div class="result"><h2>${list.length} rues arborées</h2>
+      <div class="list">${list.slice(0,14).map(f=>`<div class="item"><span class="dot"></span>
+        <span class="nm">${f.properties.name}</span><span class="val">${pct(f.properties.park_v2)}%</span></div>`).join('')}</div></div>`;
+    return;
+  }
+
+  // ---- PARC: public park walks ----
+  map.setFilter('streets-green', ['all',['!=',['get','is_street'],false],['>=',['get','park_v2'],0.6]]);
+  map.setPaintProperty('streets-green','line-opacity',0.3);
+  ['walks-halo','walks-line'].forEach(l=>map.setLayoutProperty(l,'visibility','visible'));
+  const walks = WALKS.slice().sort((a,z)=>z.properties.path_m-a.properties.path_m);
+  showWalkPills(walks);
+  panel.innerHTML = head + `<div class="result"><h2>${walks.length} balades en parc</h2>
+    <div class="list">${walks.map(f=>`<div class="item walk"><span class="dot"></span>
+      <span class="nm">${f.properties.name}</span><span class="val">${(f.properties.path_m/1000).toFixed(1)} km</span></div>`).join('')}</div></div>`;
+}
+</script>
+</body>
+</html>
