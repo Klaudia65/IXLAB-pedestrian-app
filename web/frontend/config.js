@@ -7,7 +7,7 @@
    (The key lives in client JS by design — it blocks casual/random posting, not a
    determined inspector; that trade-off was accepted for a controlled study.) */
 window.STUDY_CONFIG = {
-  baseUrl: 'http://localhost:8000',
-  studyKey: 'dev-study-key-change-me',
+  baseUrl: 'https://ixlab-study-api.onrender.com',
+  studyKey: 'ixkepaSWK0626',
   appVersion: 'dev',
 };
