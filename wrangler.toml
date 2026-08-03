@@ -1,0 +1,9 @@
+# Cloudflare deploy config for the static study frontend.
+# The Cloudflare project runs `npx wrangler deploy`; this file tells it there is
+# no Worker script — just static assets to serve — and where they live.
+# The app is then reachable at  https://<name>.<subdomain>.workers.dev/seoul-walk.html
+name = "ixlab-pedestrian-app"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./web/frontend"
