@@ -178,6 +178,8 @@ function writeProfile(profile, sliderVals, chips) {
   write('swipe.profile', profile);
   write('sliders.vals', { ...defVals, ...sliderVals });
   write('profile.chips', chips);
+  // study telemetry: snapshot the axis-keyed preference vector as it evolves
+  if (window.StudyAPI) window.StudyAPI.logProfile('onboarding', profile);
   return { profile, sliderVals, chips };
 }
 

@@ -31,9 +31,87 @@ function OnboardingChrome({ screen, go, children }) {
   );
 }
 
+// Study gate: before anything else, the participant types the code the
+// researcher gave them and consents to being recorded. On submit we open a
+// session (POST /sessions) and the app proceeds. Rendered INSIDE the DeviceFrame
+// so it inherits the theme CSS variables.
+function ConsentGate({ onDone }) {
+  const t = React.useContext(ThemeCtx);
+  const [code, setCode] = React.useState('');
+  const [mode, setMode] = React.useState('solo');
+  const [groupCode, setGroupCode] = React.useState('');
+  const [consent, setConsent] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const ready = code.trim() && consent && !busy;
+
+  async function start() {
+    if (!ready || !window.StudyAPI) return;
+    setBusy(true); setErr('');
+    const res = await window.StudyAPI.startSession({
+      code: code.trim(), mode,
+      groupCode: mode === 'friends' ? groupCode.trim() : null, consented: true,
+    });
+    setBusy(false);
+    if (res && res.session_id) onDone();
+    else setErr('Could not start the session. Check the connection and try again.');
+  }
+
+  const field = { width: '100%', padding: '11px 13px', borderRadius: t.radiusSm || 10,
+    border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--ink)',
+    fontFamily: t.fontUI, fontSize: 15, outline: 'none', boxSizing: 'border-box' };
+  const modeBtn = on => ({ flex: 1, padding: '9px 0', borderRadius: 999, cursor: 'pointer',
+    border: '1px solid ' + (on ? 'var(--accent)' : 'var(--line)'),
+    background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--accent-ink)' : 'var(--ink-soft)',
+    fontFamily: t.fontUI, fontWeight: 700, fontSize: 13 });
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center',
+      padding: '20px 24px', minHeight: 0, gap: 14 }}>
+      <div style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, letterSpacing: '-0.03em',
+        fontSize: 27, lineHeight: 1.1, color: 'var(--ink)' }}>Welcome to the study</div>
+      <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', margin: 0, lineHeight: 1.45 }}>
+        Enter the participant code you were given. During the study the app records what you
+        do (your choices, searches and, later, your walking route) for research only — no name
+        or personal detail is stored.
+      </p>
+
+      <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)' }}>Participant code
+        <input value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. P07"
+          autoCapitalize="characters" style={{ ...field, marginTop: 6 }} />
+      </label>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={() => setMode('solo')} style={modeBtn(mode === 'solo')}>Solo</button>
+        <button onClick={() => setMode('friends')} style={modeBtn(mode === 'friends')}>With friends</button>
+      </div>
+      {mode === 'friends' && (
+        <input value={groupCode} onChange={e => setGroupCode(e.target.value)}
+          placeholder="Group code (optional)" style={field} />
+      )}
+
+      <label style={{ display: 'flex', gap: 9, alignItems: 'flex-start', fontSize: 13, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}
+          style={{ marginTop: 2, width: 16, height: 16, flex: '0 0 auto' }} />
+        <span>I agree that my activity in this app is recorded for research purposes.</span>
+      </label>
+
+      {err && <div style={{ fontSize: 12.5, color: '#c0392b' }}>{err}</div>}
+
+      <button onClick={start} disabled={!ready}
+        style={{ marginTop: 4, padding: '13px 0', borderRadius: t.radius || 14, border: 'none',
+          background: ready ? 'var(--accent)' : 'var(--line)', color: ready ? 'var(--accent-ink)' : 'var(--ink-faint)',
+          fontFamily: t.fontUI, fontWeight: 800, fontSize: 15, cursor: ready ? 'pointer' : 'default' }}>
+        {busy ? 'Starting…' : 'Start'}
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const [themeId, setThemeId] = usePersist('themeId', 'wander');
   const [screen, setScreen] = usePersist('screen', 'landing');
+  const [sessionReady, setSessionReady] = React.useState(() => !!(window.StudyAPI && window.StudyAPI.hasSession()));
   const theme = THEMES[themeId] || THEMES.wander;
   const go = id => setScreen(id);
 
@@ -64,12 +142,14 @@ function App() {
         {!bare && <Dock screen={activeScreen} setScreen={setScreen} themeId={themeId} setThemeId={setThemeId} />}
         <DeviceFrame theme={theme} bare={bare}>
           {bare ? <AppBar screen={activeScreen} onMenu={() => setDrawerOpen(true)} /> : <StatusBar />}
-          <div key={activeScreen + themeId} className="screen-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            {isOnboard
-              ? <OnboardingChrome screen={activeScreen} go={go}>{screens[activeScreen]}</OnboardingChrome>
-              : screens[activeScreen]}
+          <div key={(sessionReady ? activeScreen : 'gate') + themeId} className="screen-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            {!sessionReady
+              ? <ConsentGate onDone={() => setSessionReady(true)} />
+              : isOnboard
+                ? <OnboardingChrome screen={activeScreen} go={go}>{screens[activeScreen]}</OnboardingChrome>
+                : screens[activeScreen]}
           </div>
-          {bare && <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} screen={activeScreen}
+          {bare && sessionReady && <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} screen={activeScreen}
             go={(id) => { setScreen(id); setDrawerOpen(false); }} />}
         </DeviceFrame>
       </div>

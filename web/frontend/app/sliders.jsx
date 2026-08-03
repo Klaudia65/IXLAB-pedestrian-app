@@ -51,7 +51,7 @@ function SlidersScreen({ go }) {
   // Park), not as a bipolar slider — so it isn't listed here.
   const activeAxes = VIBE_AXES.filter(a => a.id !== 'green' && !isOff(a.id));
   const mutedAxes = VIBE_AXES.filter(a => a.id !== 'green' && isOff(a.id));
-  const set = (id, v) => setVals(o => ({ ...o, [id]: v }));
+  const set = (id, v) => { setVals(o => ({ ...o, [id]: v })); if (window.StudyAPI) window.StudyAPI.logSlider(id, v); };
 
   function dropAxis(id) { setOff(o => o.includes(id) ? o : [...o, id]); }
   function restoreAxis(id) { setOff(o => o.filter(x => x !== id)); }

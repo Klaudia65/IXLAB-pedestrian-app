@@ -67,6 +67,17 @@ function LandingScreen({ go }) {
     const next = { ...choices, [pair.axis]: choice };
     setChoices(next);
     commitPairsProfile(next);                 // rebuild the base profile (sliders + chips) live
+    // study telemetry: record this forced-choice answer
+    if (window.StudyAPI) {
+      window.StudyAPI.logOnboarding([{
+        axis: pair.axis,
+        left_card_id: pair.left && pair.left.id,
+        right_card_id: pair.right && pair.right.id,
+        chosen_side: choice,
+        chosen_card_id: choice === 'left' ? (pair.left && pair.left.id)
+          : choice === 'right' ? (pair.right && pair.right.id) : null,
+      }]);
+    }
     setIdx(i => i + 1);
   }
   function undo() {

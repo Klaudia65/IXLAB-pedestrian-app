@@ -832,7 +832,7 @@ function VibeSlidersPanel({ onVibeChange, onClose }) {
   // greenery is handled by its own two-button control, not as a slider row
   const active = VIBE_AXES.filter(a => a.id !== 'green' && !off.includes(a.id));
   const muted = VIBE_AXES.filter(a => a.id !== 'green' && off.includes(a.id));
-  const set = (id, v) => { const nv = { ...vals, [id]: v }; setVals(nv); onVibeChange(nv, off, greenMode); };
+  const set = (id, v) => { const nv = { ...vals, [id]: v }; setVals(nv); onVibeChange(nv, off, greenMode); if (window.StudyAPI) window.StudyAPI.logSlider(id, v); };
   const drop = (id) => { const no = off.includes(id) ? off : [...off, id]; setOff(no); onVibeChange(vals, no, greenMode); };
   const restore = (id) => { const no = off.filter(x => x !== id); setOff(no); onVibeChange(vals, no, greenMode); };
   const onGreen = (m) => { setGreenMode(m); onVibeChange(vals, off, m); };
@@ -1431,6 +1431,16 @@ function RealMapScreen() {
     setRouteStats({ m: opt.len, where: opt.where });
     setResults(rows); setSelected(null); setSheetOpen(true);
     showRoute(opt.line);
+    // study telemetry: record the proposed route and that it was chosen
+    if (window.StudyAPI) {
+      window.StudyAPI.logRoute({
+        route_type: 'vibe-walk',
+        geojson: opt.line && opt.line.geometry,
+        length_m: opt.len,
+        est_min: opt.len ? Math.round(opt.len / WALK_SPEED_M_MIN) : null,
+        params: { option_index: i, where: opt.where, areas: opt.areas },
+      }).then(rid => { if (rid) window.StudyAPI.logRouteChoice(rid); });
+    }
   }
   // Back to the vibe street list from the options / a drawn route.
   function backToStreets() { if (routeTargetRef.current) runVibe(); else clearSearch(); }
@@ -1506,6 +1516,7 @@ function RealMapScreen() {
   }
   function runFreeText(q) {
     resetWalk(); setShowSliders(false); setStatus('');
+    if (window.StudyAPI && q && q.trim()) window.StudyAPI.logSearch(q.trim(), null);
     // NEIGHBOURHOOD first — an exact dong name / alias ("삼청동", "Bukchon") zooms
     // to the area rather than listing streets (a street like "인사동길" won't match
     // the exact-token test, so it still falls through to the street search below).
@@ -1590,7 +1601,8 @@ function RealMapScreen() {
     menu.addEventListener('mouseleave', scheduleHide);
     // touch fallback: tap the dots to open, tap the item to save/remove
     kebab.addEventListener('click', e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'inline-flex' : 'none'; });
-    menu.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(favFromResult(r)); paint(); });
+    menu.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(favFromResult(r)); paint();
+      if (window.StudyAPI) window.StudyAPI.logEvent('favorite_toggle', { name: r.name, kind: r.type }); });
 
     bar.appendChild(menu);
     bar.appendChild(kebab);

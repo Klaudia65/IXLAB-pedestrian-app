@@ -1,0 +1,30 @@
+# Render Blueprint — deploys the study API (Docker) + a managed Postgres.
+# The FRONTEND is NOT here: it goes on a static host (Cloudflare Pages / Netlify).
+#
+# On the first deploy, the API creates PostGIS + the 13 study tables on startup
+# (see backend/app/database.py -> apply_study_schema), so there is no manual
+# psql step. Only the write endpoints are used by the study; the reference-data
+# tables (pois/paths/...) are intentionally NOT deployed — the app reads those
+# from static .geojson files on the frontend host.
+databases:
+  - name: ixlab-study-db
+    plan: free                      # note: free Postgres has storage/time limits
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: ixlab-study-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free                      # note: free web services cold-start after idle
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ixlab-study-db
+          property: connectionString    # 'postgres://...' — normalized to asyncpg in config.py
+      - key: STUDY_WRITE_KEY
+        sync: false                     # set the REAL secret in the Render dashboard
+      - key: DEBUG
+        value: "false"
