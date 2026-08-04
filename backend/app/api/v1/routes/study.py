@@ -11,6 +11,7 @@ We use raw SQL (via text()) to match the style of app.main, and PostGIS helpers
 geometry columns. get_db() commits automatically when the request succeeds.
 """
 import json
+import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import text
@@ -19,12 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.schemas.study import (
+    AddFriendIn,
     AppEventIn,
     CountOut,
     FavoriteIn,
+    FriendOut,
+    FriendsOut,
     GpsPointIn,
     OnboardingChoiceIn,
     ProfileIn,
+    RenameIn,
     RouteChoiceIn,
     RouteCreated,
     RouteIn,
@@ -33,6 +38,64 @@ from app.models.schemas.study import (
     SessionCreated,
     SliderChangeIn,
 )
+
+
+# friend_code: a short, human-readable, shareable code others enter to add you.
+# Crockford base32 minus the ambiguous letters (I L O U) so it's easy to read
+# aloud / retype. ~32^6 ≈ 1e9 combinations → collisions are negligible for a study.
+_FCODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def _gen_friend_code(n: int = 6) -> str:
+    return "".join(secrets.choice(_FCODE_ALPHABET) for _ in range(n))
+
+
+def _normalize_friend_code(raw: str) -> str:
+    """Uppercase and keep only alphabet chars, and fold the shapes people commonly
+    mistype (I/L→1, O→0) so a hand-typed code still resolves."""
+    s = (raw or "").upper().strip()
+    s = s.replace("I", "1").replace("L", "1").replace("O", "0")
+    return "".join(c for c in s if c in _FCODE_ALPHABET)
+
+
+async def _ensure_friend_code(db: AsyncSession, participant_id: int, current: str | None) -> str:
+    """Return the participant's friend_code, generating+persisting one on first need
+    (covers accounts created before friend_code existed). SELECT-then-UPDATE with a
+    few retries; a collision at 32^6 is astronomically unlikely so this is enough."""
+    if current:
+        return current
+    for _ in range(8):
+        code = _gen_friend_code()
+        taken = (await db.execute(
+            text("SELECT 1 FROM participant WHERE friend_code = :c"), {"c": code}
+        )).scalar_one_or_none()
+        if taken:
+            continue
+        await db.execute(
+            text("UPDATE participant SET friend_code = :c WHERE id = :pid AND friend_code IS NULL"),
+            {"c": code, "pid": participant_id},
+        )
+        return code
+    raise HTTPException(status_code=500, detail="could not allocate a friend code")
+
+
+async def _fetch_friends(db: AsyncSession, participant_id: int) -> list[FriendOut]:
+    """Every participant on the other side of a friendship edge touching this one,
+    each with their latest saved preference vector (so the client can merge tastes)."""
+    rows = (await db.execute(text("""
+        SELECT p.id AS participant_id, p.display_name, p.friend_code,
+               (SELECT ps.vector
+                  FROM profile_snapshot ps
+                  JOIN session s ON s.id = ps.session_id
+                 WHERE s.participant_id = p.id
+                 ORDER BY ps.ts DESC LIMIT 1) AS profile
+        FROM friendship f
+        JOIN participant p
+          ON p.id = CASE WHEN f.a_id = :pid THEN f.b_id ELSE f.a_id END
+        WHERE f.a_id = :pid OR f.b_id = :pid
+        ORDER BY f.created_at DESC
+    """), {"pid": participant_id})).mappings().all()
+    return [FriendOut(**row) for row in rows]
 
 
 def require_study_key(x_study_key: str | None = Header(default=None)) -> None:
@@ -55,23 +118,52 @@ router = APIRouter(
 
 @router.post("", response_model=SessionCreated)
 async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_db)):
-    """Start a session. Creates the participant on first sight of their code
-    (upsert), optionally attaches them to a group, and opens a session row."""
-    participant_id = (await db.execute(text("""
-        INSERT INTO participant (code, condition, consent_at, user_agent)
-        VALUES (:code, :condition,
+    """Start a session. Attaches to the participant by their unique handle (`code`),
+    creating it on first sight (upsert), optionally attaches them to a group, and
+    opens a session row.
+
+    Because the handle is stable and unique, typing it on a fresh device re-attaches
+    to the SAME account: `xmax = 0` tells insert (new account) from update (returning
+    recovery), and we hand back the current display_name plus the last saved profile
+    vector so the client can rehydrate the walker's taste. A blank/whitespace
+    display_name is treated as absent so it never wipes an existing label."""
+    # Default the label to the handle here (not in SQL) so the :code bind isn't
+    # reused with two inferred types — asyncpg can't deduce that and 500s.
+    display_name = (body.display_name or "").strip() or body.code
+    row = (await db.execute(text("""
+        INSERT INTO participant (code, display_name, condition, consent_at, user_agent)
+        VALUES (:code, :display_name, :condition,
                 CASE WHEN :consented THEN NOW() ELSE NULL END, :ua)
         ON CONFLICT (code) DO UPDATE
-          SET user_agent = EXCLUDED.user_agent,
-              consent_at = COALESCE(participant.consent_at, EXCLUDED.consent_at),
-              condition  = COALESCE(participant.condition, EXCLUDED.condition)
-        RETURNING id
+          SET user_agent   = EXCLUDED.user_agent,
+              consent_at   = COALESCE(participant.consent_at, EXCLUDED.consent_at),
+              condition    = COALESCE(participant.condition, EXCLUDED.condition),
+              -- keep the existing label; only fill it if this account never had one
+              display_name = COALESCE(participant.display_name, EXCLUDED.display_name)
+        RETURNING id, display_name, friend_code, (xmax = 0) AS inserted
     """), {
         "code": body.code,
+        "display_name": display_name,
         "condition": body.mode if body.mode in ("solo", "friends") else None,
         "consented": body.consented,
         "ua": body.user_agent,
-    })).scalar_one()
+    })).one()
+    participant_id = row.id
+    is_returning = not row.inserted
+
+    # Make sure this account has a shareable friend code (older accounts predate it).
+    friend_code = await _ensure_friend_code(db, participant_id, row.friend_code)
+
+    # Latest preference vector this participant ever saved, so a recovered account
+    # comes back with its taste already tuned instead of a blank profile.
+    profile = (await db.execute(text("""
+        SELECT ps.vector
+        FROM profile_snapshot ps
+        JOIN session s ON s.id = ps.session_id
+        WHERE s.participant_id = :pid
+        ORDER BY ps.ts DESC
+        LIMIT 1
+    """), {"pid": participant_id})).scalar_one_or_none()
 
     group_id = None
     if body.group_code:
@@ -94,7 +186,81 @@ async def create_session(body: SessionCreate, db: AsyncSession = Depends(get_db)
         "mode": body.mode, "ver": body.app_version,
     })).scalar_one()
 
-    return SessionCreated(session_id=session_id, participant_id=participant_id)
+    friends = await _fetch_friends(db, participant_id)
+
+    return SessionCreated(
+        session_id=session_id,
+        participant_id=participant_id,
+        display_name=row.display_name,
+        friend_code=friend_code,
+        is_returning=is_returning,
+        profile=profile,
+        friends=friends,
+    )
+
+
+@router.post("/{session_id}/rename")
+async def rename_participant(
+    session_id: int, body: RenameIn, db: AsyncSession = Depends(get_db)
+):
+    """Change the free display label of the session's participant. The unique
+    handle (`code`) and participant.id are untouched, so history and (later)
+    friendships follow the account across a rename. A blank name is rejected."""
+    name = body.display_name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="display_name cannot be empty")
+    updated = (await db.execute(text("""
+        UPDATE participant SET display_name = :name
+        WHERE id = (SELECT participant_id FROM session WHERE id = :sid)
+        RETURNING display_name
+    """), {"name": name, "sid": session_id})).scalar_one_or_none()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="unknown session")
+    return {"ok": True, "display_name": updated}
+
+
+# --- friends ----------------------------------------------------------------
+
+async def _participant_of_session(db: AsyncSession, session_id: int) -> int:
+    pid = (await db.execute(
+        text("SELECT participant_id FROM session WHERE id = :sid"), {"sid": session_id}
+    )).scalar_one_or_none()
+    if pid is None:
+        raise HTTPException(status_code=404, detail="unknown session")
+    return pid
+
+
+@router.get("/{session_id}/friends", response_model=FriendsOut)
+async def list_friends(session_id: int, db: AsyncSession = Depends(get_db)):
+    """List the session participant's current friends (with their taste vectors)."""
+    pid = await _participant_of_session(db, session_id)
+    return FriendsOut(friends=await _fetch_friends(db, pid))
+
+
+@router.post("/{session_id}/friends", response_model=FriendsOut)
+async def add_friend(
+    session_id: int, body: AddFriendIn, db: AsyncSession = Depends(get_db)
+):
+    """Add a friend by their friend_code. Friendship is instant & mutual: one
+    canonical edge is created and both sides now see each other. Idempotent (adding
+    an existing friend is a no-op). Returns the updated friends list."""
+    pid = await _participant_of_session(db, session_id)
+    code = _normalize_friend_code(body.friend_code)
+    if not code:
+        raise HTTPException(status_code=422, detail="empty or invalid friend code")
+    target = (await db.execute(
+        text("SELECT id FROM participant WHERE friend_code = :c"), {"c": code}
+    )).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="no one has that friend code")
+    if target == pid:
+        raise HTTPException(status_code=400, detail="that's your own code")
+    a_id, b_id = min(pid, target), max(pid, target)
+    await db.execute(
+        text("INSERT INTO friendship (a_id, b_id) VALUES (:a, :b) ON CONFLICT DO NOTHING"),
+        {"a": a_id, "b": b_id},
+    )
+    return FriendsOut(friends=await _fetch_friends(db, pid))
 
 
 @router.post("/{session_id}/end")

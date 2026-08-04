@@ -298,6 +298,23 @@ function readVibeTarget() {
   return targetFromSliders(vals, off, readGreenMode());
 }
 
+// Blend the friends joining THIS walk into the vibe target. For each axis the user
+// cares about we average the user's weight with every joining friend who has an
+// opinion on it; a friend missing that axis is skipped (neutral, never a reject),
+// so a new/empty friend profile never distorts the ranking. Returns
+// { target, group } where group is null when walking solo (target unchanged).
+function mergeTargetWithGroup(userTarget) {
+  const active = (window.activeJoiningFriends && window.activeJoiningFriends()) || [];
+  if (!active.length) return { target: userTarget, group: null };
+  const merged = {};
+  Object.keys(userTarget).forEach(ax => {
+    const votes = [userTarget[ax]];
+    active.forEach(f => { const v = f.profile && f.profile[ax]; if (v != null && !isNaN(v)) votes.push(v); });
+    merged[ax] = votes.reduce((a, b) => a + b, 0) / votes.length;
+  });
+  return { target: merged, group: { count: active.length, names: active.map(f => f.display_name || f.friend_code) } };
+}
+
 // Percentile-normalise every axis the SAME way, so the six sliders react in one
 // shared "currency" instead of each axis's raw scale (raw_polished comes in ~12
 // coarse steps with a third of streets null, quiet_lively is smooth over 263
@@ -359,6 +376,9 @@ function rankByVibe(target, feats) {
   // rather than a list, so a longer set stays legible.
   return out.sort((a, b) => b.score - a.score).slice(0, 20);
 }
+// Shared so the Social / Group screens can rank the SAME scored streets by a merged
+// group vibe (module runs at load, before any screen mounts, so this is ready).
+window.rankByVibe = rankByVibe;
 
 // (runVibe reads readVibeTarget() directly now — it needs the target to decide
 //  whether to also surface park walks — so there's no standalone resolveVibe.)
@@ -1451,7 +1471,7 @@ function RealMapScreen() {
   // and only the collapsed sheet peek + tab bar at the bottom, so the highlighted
   // streets land in the visible strip below the panel.
   const VIBE_SLIDERS_FIT_PAD = { top: 400, bottom: 140, left: 36, right: 36 };
-  function runVibeWithTarget(target, fit = true, pad) {
+  function runVibeWithTarget(target, fit = true, pad, group) {
     // rank streets on all active axes; if the user leans toward PARK, also surface
     // the actual park WALKS (nature-paths) — the paths INSIDE parks aren't named
     // streets, so they can only come from that layer. Walks listed first (they ARE
@@ -1460,7 +1480,11 @@ function RealMapScreen() {
     const wantPark = greenModeRef.current === 'park';   // the "Park" greenery button
     const walks = wantPark ? resolveNature(natureFeats.current) : [];
     const list = [...walks, ...streets];
-    setKind('vibe'); setTitle('Matching your vibe'); setResults(list);
+    // Title reflects the blend when friends are on the walk.
+    const title = group && group.count
+      ? `Matching your group's vibe · ${group.count + 1} people`
+      : 'Matching your vibe';
+    setKind('vibe'); setTitle(title); setResults(list);
     setSelected(null);
     // remember what to join into a walk (the ranked STREETS, not the park walks)
     routeTargetRef.current = Object.keys(target).length ? target : null;
@@ -1473,13 +1497,15 @@ function RealMapScreen() {
   // panel (top) and the sheet peek (bottom) while the user tunes the vibe.
   function runVibe() {
     greenModeRef.current = readGreenMode();
-    runVibeWithTarget(readVibeTarget(), true, VIBE_SLIDERS_FIT_PAD);
+    const g = mergeTargetWithGroup(readVibeTarget());
+    runVibeWithTarget(g.target, true, VIBE_SLIDERS_FIT_PAD, g.group);
     setShowSliders(true); setSheetOpen(false);
   }
   // Live re-rank as the in-map sliders move — no camera refit (fit=false).
   function onVibeSlidersChange(vals, off, greenMode) {
     greenModeRef.current = greenMode;
-    runVibeWithTarget(targetFromSliders(vals, off, greenMode), false);
+    const g = mergeTargetWithGroup(targetFromSliders(vals, off, greenMode));
+    runVibeWithTarget(g.target, false, undefined, g.group);
   }
   // preset vibe chips — a fixed target instead of the live sliders.
   function runPreset(p) {

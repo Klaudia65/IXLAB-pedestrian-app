@@ -48,13 +48,21 @@ function ConsentGate({ onDone }) {
   async function start() {
     if (!ready || !window.StudyAPI) return;
     setBusy(true); setErr('');
+    // Normalise the handle so "Min" and "min" resolve to the same account.
     const res = await window.StudyAPI.startSession({
-      code: code.trim(), mode,
+      code: code.trim().toLowerCase(), mode,
       groupCode: mode === 'friends' ? groupCode.trim() : null, consented: true,
     });
     setBusy(false);
-    if (res && res.session_id) onDone();
-    else setErr('Could not start the session. Check the connection and try again.');
+    if (res && res.session_id) {
+      // Returning account: bring the saved taste profile back before entering.
+      if (res.is_returning && res.profile && window.rehydrateProfileFromVector) {
+        window.rehydrateProfileFromVector(res.profile);
+      }
+      onDone();
+    } else {
+      setErr('Could not start the session. Check the connection and try again.');
+    }
   }
 
   const field = { width: '100%', padding: '11px 13px', borderRadius: t.radiusSm || 10,
@@ -71,14 +79,14 @@ function ConsentGate({ onDone }) {
       <div style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, letterSpacing: '-0.03em',
         fontSize: 27, lineHeight: 1.1, color: 'var(--ink)' }}>Welcome to the study</div>
       <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', margin: 0, lineHeight: 1.45 }}>
-        Enter the participant code you were given. During the study the app records what you
-        do (your choices, searches and, later, your walking route) for research only — no name
-        or personal detail is stored.
+        Pick a short handle (e.g. <b>min</b>, <b>su</b>, <b>flo</b>). It's how you sign in — type
+        the same one on any device to bring your account back. The app records your choices,
+        searches and route for research only; no name or personal detail is stored.
       </p>
 
-      <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)' }}>Participant code
-        <input value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. P07"
-          autoCapitalize="characters" style={{ ...field, marginTop: 6 }} />
+      <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)' }}>Your handle
+        <input value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. min"
+          autoCapitalize="none" autoCorrect="off" spellCheck={false} style={{ ...field, marginTop: 6 }} />
       </label>
 
       <div style={{ display: 'flex', gap: 8 }}>
@@ -108,6 +116,49 @@ function ConsentGate({ onDone }) {
   );
 }
 
+// Global "someone added you" toasts. Listens for the app-wide friends poll's
+// 'seoulwalk:friends' event and, for each newcomer in `added`, slides a pill up
+// from the bottom of the phone for a few seconds. Rendered inside the DeviceFrame
+// so it's themed and clipped to the screen, and shows on ANY screen.
+function FriendToasts() {
+  const t = React.useContext(ThemeCtx);
+  const [toasts, setToasts] = React.useState([]);
+  const seq = React.useRef(0);
+  React.useEffect(() => {
+    function onFriends(e) {
+      const added = (e.detail && e.detail.added) || [];
+      added.forEach(f => {
+        const id = 'ft' + (seq.current++);
+        const name = f.display_name || f.friend_code || 'A friend';
+        setToasts(prev => [...prev, { id, name }]);
+        setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 4800);
+      });
+    }
+    window.addEventListener('seoulwalk:friends', onFriends);
+    return () => window.removeEventListener('seoulwalk:friends', onFriends);
+  }, []);
+  if (!toasts.length) return null;
+  return (
+    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 74, zIndex: 60, pointerEvents: 'none',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '0 18px' }}>
+      <style>{'@keyframes ftIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}'}</style>
+      {toasts.map(ft => (
+        <div key={ft.id} style={{ pointerEvents: 'auto', maxWidth: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--ink)', color: 'var(--paper)', borderRadius: 999, padding: '11px 16px 11px 11px',
+          boxShadow: '0 10px 34px rgba(0,0,0,0.30)', animation: 'ftIn .32s cubic-bezier(.22,1,.36,1)' }}>
+          <span style={{ width: 28, height: 28, borderRadius: 999, flex: '0 0 auto', background: 'var(--accent)', color: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.fontMono, fontSize: 11, fontWeight: 700 }}>
+            {String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
+          </span>
+          <span style={{ fontFamily: t.fontUI, fontSize: 13.5, fontWeight: 600 }}>
+            <b>{ft.name}</b> added you as a friend
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const [themeId, setThemeId] = usePersist('themeId', 'wander');
   const [screen, setScreen] = usePersist('screen', 'landing');
@@ -120,6 +171,14 @@ function App() {
   // the Dock is replaced by a top-bar burger + slide-in navigation drawer.
   const bare = useMediaQuery('(max-width: 760px)');
   const [drawerOpen, setDrawerOpen] = React.useState(false);
+
+  // Once a session exists, poll the friends list so a friend added on another
+  // phone appears here (and pops a toast) without a manual refresh.
+  React.useEffect(() => {
+    if (!sessionReady || !window.StudyAPI || !window.StudyAPI.startFriendPolling) return;
+    window.StudyAPI.startFriendPolling(10000);
+    return () => { if (window.StudyAPI.stopFriendPolling) window.StudyAPI.stopFriendPolling(); };
+  }, [sessionReady]);
 
   const screens = {
     landing: <LandingScreen go={go} />,
@@ -151,6 +210,7 @@ function App() {
           </div>
           {bare && sessionReady && <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} screen={activeScreen}
             go={(id) => { setScreen(id); setDrawerOpen(false); }} />}
+          {sessionReady && <FriendToasts />}
         </DeviceFrame>
       </div>
     </ThemeCtx.Provider>

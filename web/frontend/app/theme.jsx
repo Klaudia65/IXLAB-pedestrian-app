@@ -183,6 +183,135 @@ function writeProfile(profile, sliderVals, chips) {
   return { profile, sliderVals, chips };
 }
 
+// Rehydrate the base profile from a cloud-returned axis vector (account recovery
+// after localStorage was cleared). Rebuilds the slider positions + pole chips the
+// same way writeProfile does, but does NOT re-log telemetry — this is restoring a
+// past state, not producing a new one. `vector` is { axisKey: value in [-1,1] }.
+// No-op (returns false) for an empty/missing vector so a blank recovery leaves the
+// onboarding to run normally.
+function rehydrateProfileFromVector(vector) {
+  if (!vector || typeof vector !== 'object') return false;
+  const profile = {}, sliderVals = {}, chips = [];
+  (SWIPE_AXES || []).forEach(([k, neg, pos]) => {
+    const v = vector[k];
+    if (v == null || isNaN(v)) return;
+    profile[k] = v;
+    const sid = AXIS_TO_SLIDER[k];
+    if (sid) sliderVals[sid] = (clamp(v, -1, 1) + 1) / 2;
+    const label = v > 0 ? pos : neg;
+    if (label && Math.abs(v) >= CHIP_MIN) chips.push({ key: k, label, value: v });
+  });
+  if (!Object.keys(profile).length) return false;
+  chips.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  const defVals = Object.fromEntries((VIBE_AXES || []).map(a => [a.id, a.def]));
+  const write = (key, val) => { try { localStorage.setItem('seoulwalk.' + key, JSON.stringify(val)); } catch (e) {} };
+  write('swipe.profile', profile);
+  write('sliders.vals', { ...defVals, ...sliderVals });
+  write('profile.chips', chips);
+  return true;
+}
+
+// ======== GROUP TASTE MERGE ================================================
+// When friends join a walk we blend everyone's taste into one vibe target.
+
+// The user's own taste as an axis vector in [-1,+1], derived from the live slider
+// positions (so it tracks manual tuning), falling back to the swipe profile.
+function readUserTasteVector() {
+  let vals = null;
+  try { vals = JSON.parse(localStorage.getItem('seoulwalk.sliders.vals') || 'null'); } catch (e) {}
+  if (!vals) { try { return JSON.parse(localStorage.getItem('seoulwalk.swipe.profile') || '{}'); } catch (e) { return {}; } }
+  const vec = {};
+  Object.keys(AXIS_TO_SLIDER).forEach(ax => {
+    const v = vals[AXIS_TO_SLIDER[ax]];
+    if (v != null) vec[ax] = v * 2 - 1;               // [0,1] slider → [-1,+1] axis
+  });
+  return vec;
+}
+
+// Friends toggled to join THIS walk. Reads the persisted 'profile.friends' toggle
+// map + the StudyAPI friends cache. A joining friend counts even if they have no
+// taste vector yet (they're on the walk) — downstream treats a missing/empty
+// profile as neutral/flexible, never a reject — so selecting one friend always
+// forms a group, whether or not they've done the onboarding.
+function activeJoiningFriends() {
+  try {
+    const joining = JSON.parse(localStorage.getItem('seoulwalk.profile.friends') || '{}');
+    const all = (window.StudyAPI && window.StudyAPI.myFriends && window.StudyAPI.myFriends()) || [];
+    return all.filter(f => joining[f.participant_id]);
+  } catch (e) { return []; }
+}
+
+// Blend axis vectors into one, averaging per axis over ONLY the vectors that have
+// an opinion on it. A missing axis counts as NEUTRAL — it's skipped, never a vote
+// against — so an empty/new profile never distorts the blend. Returns {axis: val}.
+function mergeTasteVectors(vectors) {
+  const sums = {}, counts = {};
+  (vectors || []).forEach(vec => {
+    if (!vec) return;
+    Object.keys(vec).forEach(ax => {
+      const v = vec[ax];
+      if (v == null || isNaN(v)) return;
+      sums[ax] = (sums[ax] || 0) + v; counts[ax] = (counts[ax] || 0) + 1;
+    });
+  });
+  const merged = {};
+  Object.keys(sums).forEach(ax => { merged[ax] = sums[ax] / counts[ax]; });
+  return merged;
+}
+
+// Explainability chips for a merged vector: the axes with the strongest shared
+// lean, labelled by pole ("quiet", "local", …), for "what you all like". Returns
+// ordered [{ key, label, value }].
+function groupTasteChips(merged, n) {
+  const chips = [];
+  (SWIPE_AXES || []).forEach(([k, neg, pos]) => {
+    const v = merged[k];
+    if (v == null || Math.abs(v) < CHIP_MIN) return;
+    const label = v > 0 ? pos : neg;
+    if (label) chips.push({ key: k, label, value: v });
+  });
+  chips.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  return n ? chips.slice(0, n) : chips;
+}
+
+// Shared street recommender — lets the Social / Group screens rank the SAME
+// NLP-scored streets the map uses, by a (merged) taste vector, without owning the
+// map's data pipeline. The geojson is fetched once and cached across screens.
+let _vibeStreetsPromise = null;
+function loadVibeStreets() {
+  if (!_vibeStreetsPromise) {
+    _vibeStreetsPromise = fetch('scores-named-streets-jongno.geojson')
+      .then(r => r.json())
+      .then(gj => (gj.features || []).filter(f => f.properties && f.properties.name))
+      .catch(() => []);
+  }
+  return _vibeStreetsPromise;
+}
+// Rank streets for a taste vector (axis → weight in [-1,1]); resolves to the top
+// n {name, score, sub, feature}. Reuses realmap's rankByVibe so the ordering is
+// identical to the map. Returns [] until rankByVibe/data are available.
+function recommendForVector(vector, n) {
+  return loadVibeStreets().then(feats => {
+    if (!window.rankByVibe || !feats.length) return [];
+    const target = {};
+    Object.keys(vector || {}).forEach(k => { if (vector[k] != null && !isNaN(vector[k])) target[k] = vector[k]; });
+    if (!Object.keys(target).length) return [];
+    const ranked = window.rankByVibe(target, feats);
+    return n ? ranked.slice(0, n) : ranked;
+  });
+}
+// Tiny hook: recompute recommendations whenever the taste vector changes.
+function useRecommendations(vector, n) {
+  const [recs, setRecs] = React.useState([]);
+  const key = JSON.stringify(vector || {});
+  React.useEffect(() => {
+    let alive = true;
+    recommendForVector(vector, n).then(r => { if (alive) setRecs(r); });
+    return () => { alive = false; };
+  }, [key, n]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return recs;
+}
+
 // ---- pair PHOTO curation (which two photos each axis comparison shows) --------
 // The user can override the auto-picked exemplars from the in-app curation screen.
 // Override shape: { axisKey: { left: cardId, right: cardId } }. It only changes the
@@ -268,19 +397,9 @@ const SOCIAL = {
   },
 };
 
-// 3B — group merge: each axis lists every person's comfortable range.
-// The overlap (and any conflict) is COMPUTED from these in group.jsx, so a
-// "no common ground" axis like `energy` below renders as a reconciliation case.
-const GROUP_AXES = [
-  { id: 'energy', left: 'Quiet', right: 'Lively', ranges: { you: [0.20, 0.45], min: [0.62, 0.88], jae: [0.25, 0.50] } },
-  { id: 'era', left: 'Historic', right: 'Modern', ranges: { you: [0.20, 0.50], min: [0.35, 0.70], jae: [0.15, 0.45] } },
-  { id: 'price', left: 'Cheap', right: 'Fancy', ranges: { you: [0.25, 0.55], min: [0.40, 0.75], jae: [0.30, 0.60] } },
-  { id: 'green', left: 'Concrete', right: 'Greenery', ranges: { you: [0.50, 0.80], min: [0.40, 0.70], jae: [0.55, 0.90] } },
-];
-const GROUP_FLAGS = [
-  { ok: true, t: '' },
-  { ok: false, t: '' },
-];
+// 3B — group merge now runs on REAL taste vectors (me + joining friends), built in
+// group.jsx from each person's profile. The old hardcoded GROUP_AXES / GROUP_FLAGS
+// sample ranges were removed once that screen went live.
 
 /* ---- tiny helpers ---- */
 function usePersist(key, initial) {
@@ -386,9 +505,11 @@ function useFavorites() {
 Object.assign(window, {
   THEMES, THEME_ORDER, HERO_PHOTO, SWIPE_CARDS, SWIPE_AXES, VIBE_AXES,
   AXIS_TO_SLIDER, computeSwipeProfile, commitSwipeProfile,
-  computeProfileFromPairs, commitPairsProfile,
+  computeProfileFromPairs, commitPairsProfile, rehydrateProfileFromVector,
+  readUserTasteVector, activeJoiningFriends, mergeTasteVectors, groupTasteChips,
+  loadVibeStreets, recommendForVector, useRecommendations,
   cardById, readPairOverride, resolveSwipePairs,
-  MAP_ZONE, MAP_SPOTS, HIDDEN_PATH, FAMOUS_PATH, RECO_PATH, MAP_MODES, PEOPLE, SOCIAL, GROUP_AXES, GROUP_FLAGS,
+  MAP_ZONE, MAP_SPOTS, HIDDEN_PATH, FAMOUS_PATH, RECO_PATH, MAP_MODES, PEOPLE, SOCIAL,
   usePersist, prefersReduced, useMediaQuery, clamp, lerp,
   geomToThumb, getFavorites, isFavorite, toggleFavorite, useFavorites,
 });

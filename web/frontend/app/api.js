@@ -56,6 +56,7 @@
     opts = opts || {};
     return post('/sessions', {
       code: opts.code,
+      display_name: opts.displayName || null,
       mode: opts.mode || 'solo',
       group_code: opts.groupCode || null,
       consented: !!opts.consented,
@@ -63,8 +64,14 @@
       user_agent: navigator.userAgent
     }).then(function (res) {
       if (res && res.session_id) {
-        session = { session_id: res.session_id, participant_id: res.participant_id, code: opts.code };
+        session = {
+          session_id: res.session_id, participant_id: res.participant_id,
+          code: opts.code, display_name: res.display_name || opts.displayName || opts.code,
+          friend_code: res.friend_code || null
+        };
         saveSession(session);
+        // seed the known-friends set so only friends added AFTER now will toast
+        seedFriends(res.friends || []);
       }
       return res;
     });
@@ -73,6 +80,103 @@
   function resetSession() { session = null; try { localStorage.removeItem(SS_KEY); } catch (e) {} }
   function hasSession() { return !!sid(); }
   function currentCode() { return session && session.code; }
+  function currentDisplayName() { return (session && (session.display_name || session.code)) || null; }
+  function myFriendCode() { return (session && session.friend_code) || null; }
+
+  // --- friends ---
+  // Friendship is mutual server-side, so when someone enters MY code I become their
+  // friend without my app knowing. We poll the friends list and, on any friend that
+  // appeared since we last looked, fire a 'seoulwalk:friends' event carrying the
+  // newcomers in `added` — the UI turns that into a "X added you" toast. `known` is
+  // persisted so a reload (or an add I initiated myself) never re-toasts.
+  var FRIENDS_KNOWN_KEY = 'seoulwalk.friends.known';
+  var FRIENDS_LIST_KEY = 'seoulwalk.friends.list';
+  // Persisted so myFriends() (used by the group-taste merge on the map) has the
+  // last-known friends immediately after a reload, before the first poll returns.
+  var friendsCache = (function () {
+    try { return JSON.parse(localStorage.getItem(FRIENDS_LIST_KEY) || '[]'); } catch (e) { return []; }
+  })();
+  var friendPollTimer = null;
+
+  function friendIds(list) { return (list || []).map(function (f) { return f.participant_id; }); }
+  function loadKnown() {
+    try { return new Set(JSON.parse(localStorage.getItem(FRIENDS_KNOWN_KEY) || '[]')); } catch (e) { return new Set(); }
+  }
+  function saveKnown(set) {
+    try { localStorage.setItem(FRIENDS_KNOWN_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+  }
+  function emitFriends(list, added) {
+    friendsCache = list || [];
+    try { localStorage.setItem(FRIENDS_LIST_KEY, JSON.stringify(friendsCache)); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('seoulwalk:friends', { detail: { friends: friendsCache, added: added || [] } })); } catch (e) {}
+  }
+  function myFriends() { return friendsCache.slice(); }
+
+  // Seed the known set silently (no toast) from a list — used at session start so
+  // existing friends never announce themselves.
+  function seedFriends(list) {
+    list = list || [];
+    saveKnown(new Set(friendIds(list)));
+    emitFriends(list, []);
+  }
+
+  // GET the friends list, diff against `known`, toast the newcomers, cache + persist.
+  function refreshFriends() {
+    if (!sid()) return Promise.resolve([]);
+    return fetch(BASE_URL + '/sessions/' + sid() + '/friends', { headers: headers() })
+      .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
+      .then(function (r) {
+        var list = (r && r.friends) || [];
+        var known = loadKnown();
+        var added = list.filter(function (f) { return !known.has(f.participant_id); });
+        saveKnown(new Set(friendIds(list)));
+        emitFriends(list, added);
+        return list;
+      })
+      .catch(function (e) { console.warn('[StudyAPI] refreshFriends failed', e); return friendsCache; });
+  }
+
+  function startFriendPolling(ms) {
+    stopFriendPolling();
+    refreshFriends();                                  // immediate first sync
+    friendPollTimer = setInterval(refreshFriends, ms || 10000);
+  }
+  function stopFriendPolling() {
+    if (friendPollTimer) { clearInterval(friendPollTimer); friendPollTimer = null; }
+  }
+
+  // Add a friend by their code. Resolves to { ok, friends } or { ok:false, error }
+  // so the UI can show "no one has that code" vs a network failure. Because *I*
+  // initiated this, the new friend is marked known (no self-toast).
+  function addFriend(code) {
+    if (!sid()) return Promise.resolve({ ok: false, error: 'no session yet' });
+    return fetch(BASE_URL + '/sessions/' + sid() + '/friends', {
+      method: 'POST', headers: headers(), body: JSON.stringify({ friend_code: code })
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (body) {
+        if (r.ok) {
+          var list = (body && body.friends) || [];
+          saveKnown(new Set(friendIds(list)));
+          emitFriends(list, []);
+          return { ok: true, friends: list };
+        }
+        return { ok: false, error: (body && body.detail) || ('HTTP ' + r.status) };
+      });
+    }).catch(function (e) { console.warn('[StudyAPI] addFriend failed', e); return { ok: false, error: 'network error' }; });
+  }
+
+  // Rename the free display label (handle/code stays the same). Updates the local
+  // session slot on success so every screen reads the new name immediately.
+  function renameDisplayName(name) {
+    name = (name || '').trim();
+    if (!name) return Promise.resolve(null);
+    return scoped('/rename', { display_name: name }).then(function (res) {
+      if (res && res.display_name && session) {
+        session.display_name = res.display_name; saveSession(session);
+      }
+      return res;
+    });
+  }
 
   // --- typed loggers ---
   function logOnboarding(list) { return scoped('/onboarding', list); }
@@ -108,6 +212,9 @@
   window.StudyAPI = {
     startSession: startSession, endSession: endSession, resetSession: resetSession,
     hasSession: hasSession, currentCode: currentCode,
+    currentDisplayName: currentDisplayName, renameDisplayName: renameDisplayName,
+    myFriendCode: myFriendCode, addFriend: addFriend, myFriends: myFriends,
+    refreshFriends: refreshFriends, startFriendPolling: startFriendPolling, stopFriendPolling: stopFriendPolling,
     logOnboarding: logOnboarding, logProfile: logProfile, logSearch: logSearch,
     logRoute: logRoute, logRouteChoice: logRouteChoice, logEvent: logEvent,
     logSlider: logSlider, logGps: logGps, flushGps: flushGps,

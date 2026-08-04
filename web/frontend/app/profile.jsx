@@ -33,12 +33,13 @@ function readSwipeChips() {
   } catch (e) { return null; }
 }
 
-// friends, with initials + a short relationship note
-const PROFILE_FRIENDS = [
-  { id: 'NOA', name: 'NOA', meta: '2 walks together' },
-  { id: 'TEO', name: 'TEO', meta: 'New this week' },
-  { id: 'SUMIN', name: 'SUMIN', meta: '5 walks together' },
-];
+// Up to two uppercase initials from a friend's display name, for their avatar disc.
+function friendInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '??';
+  const chars = parts.length > 1 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2);
+  return chars.toUpperCase();
+}
 
 // ---- soft radar-mist + grid background (replaces the DS RadarMist) ----
 function ProfileBackdrop({ accent }) {
@@ -152,27 +153,104 @@ function FriendCard({ f, on, accent, onClick }) {
   );
 }
 
+// Read the current account's display label / handle from the study client, with
+// safe fallbacks if telemetry is disabled or a session hasn't started.
+function readAccount() {
+  const S = window.StudyAPI || {};
+  return {
+    name: (S.currentDisplayName && S.currentDisplayName()) || 'You',
+    handle: (S.currentCode && S.currentCode()) || null,
+  };
+}
+
 function ProfileScreen({ go }) {
   const t = React.useContext(ThemeCtx);
+
+  // --- account identity: editable display name + stable reconnect handle ---
+  const [account, setAccount] = React.useState(readAccount);
+  const [editingName, setEditingName] = React.useState(false);
+  const [nameDraft, setNameDraft] = React.useState(account.name);
+
+  function beginEdit() { setNameDraft(account.name); setEditingName(true); }
+  function saveName() {
+    const v = nameDraft.trim();
+    setEditingName(false);
+    if (!v || v === account.name) return;
+    setAccount(a => ({ ...a, name: v }));
+    if (window.StudyAPI && window.StudyAPI.renameDisplayName) window.StudyAPI.renameDisplayName(v);
+  }
+  // "Not me" / switch account: forget this device's session and return to the gate.
+  function switchAccount() {
+    if (window.StudyAPI && window.StudyAPI.resetSession) window.StudyAPI.resetSession();
+    try { window.location.reload(); } catch (e) {}
+  }
+  // Avatar text: uppercased name, shrunk for longer labels so it always fits.
+  const avatarText = (account.name || 'You').toUpperCase();
+  const avatarFont = avatarText.length <= 4 ? 26 : avatarText.length <= 7 ? 20 : 15;
+
   // Prefs come from the swipe when available (else the fallback set). A chip is ON
   // unless the user explicitly toggled it off, so newly detected chips show ON.
   const detectedPrefs = React.useMemo(() => readSwipeChips() || PROFILE_PREFS, []);
   const [prefs, setPrefs] = usePersist('profile.prefs', {});
-  const [friends, setFriends] = usePersist('profile.friends', { NOA: true, TEO: false, SUMIN: true });
   const favorites = useFavorites();               // saved streets from the detailed map
   const pathsScroll = useDragScroll();
   const friendsScroll = useDragScroll();
 
+  // Real friends from the cloud (each with their taste vector, for the later merge).
+  // `joining` (persisted) tracks which of them come on THIS walk; a newly added
+  // friend starts off so the walker opts them in deliberately.
+  const [friendList, setFriendList] = React.useState(
+    () => (window.StudyAPI && window.StudyAPI.myFriends && window.StudyAPI.myFriends()) || []);
+  const [joining, setJoining] = usePersist('profile.friends', {});   // { participant_id: true }
+  const myCode = (window.StudyAPI && window.StudyAPI.myFriendCode && window.StudyAPI.myFriendCode()) || null;
+  const [codeInput, setCodeInput] = React.useState('');
+  const [addErr, setAddErr] = React.useState('');
+  const [addBusy, setAddBusy] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+
+  // Stay in sync with the app-wide friends poll: the event carries the fresh list
+  // (whoever added whom), so a friend added on the other phone shows up here live.
+  React.useEffect(() => {
+    const onFriends = e => setFriendList((e.detail && e.detail.friends) || []);
+    window.addEventListener('seoulwalk:friends', onFriends);
+    if (window.StudyAPI && window.StudyAPI.refreshFriends) window.StudyAPI.refreshFriends();
+    return () => window.removeEventListener('seoulwalk:friends', onFriends);
+  }, []);
+
+  async function submitAddFriend() {
+    const code = codeInput.trim();
+    if (!code || addBusy || !window.StudyAPI || !window.StudyAPI.addFriend) return;
+    setAddBusy(true); setAddErr('');
+    const res = await window.StudyAPI.addFriend(code);
+    setAddBusy(false);
+    if (res && res.ok) { setFriendList(res.friends); setCodeInput(''); }
+    else setAddErr((res && res.error) || 'Could not add that friend');
+  }
+  function copyMyCode() {
+    if (!myCode) return;
+    try { navigator.clipboard.writeText(myCode); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) {}
+  }
+
+  // Group taste for explainability: blend my vector with the joining friends'
+  // (missing axes skipped, never a reject) and surface the strongest shared leans
+  // — "what you all like". Empty when walking solo.
+  const groupChips = React.useMemo(() => {
+    const active = friendList.filter(f => joining[f.participant_id] && f.profile);
+    if (!active.length || !window.mergeTasteVectors) return [];
+    const merged = window.mergeTasteVectors([window.readUserTasteVector(), ...active.map(f => f.profile)]);
+    return window.groupTasteChips(merged, 3);
+  }, [friendList, joining]);
+
   const isPrefOn = k => prefs[k] !== false;
   const prefCount = detectedPrefs.filter(p => isPrefOn(p.key)).length;
-  const friendCount = Object.values(friends).filter(Boolean).length;
+  const friendCount = friendList.filter(f => joining[f.participant_id]).length;
   const accent = OUTING_ACCENT[outingFor(friendCount)];
   const ctaMeta = friendCount === 0
     ? `Solo wander · ${prefCount} preferences`
     : `${friendCount} friend${friendCount > 1 ? 's' : ''} · ${prefCount} preferences`;
 
   const togglePref = k => setPrefs({ ...prefs, [k]: !isPrefOn(k) });
-  const toggleFriend = k => setFriends({ ...friends, [k]: !friends[k] });
+  const toggleFriend = pid => setJoining({ ...joining, [pid]: !joining[pid] });
 
   const iconBtn = {
     width: 44, height: 44, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -189,7 +267,7 @@ function ProfileScreen({ go }) {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></svg>
         </button>
         <Label>Profile</Label>
-        <button style={iconBtn}>
+        <button onClick={beginEdit} title="Rename" style={iconBtn}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
         </button>
       </div>
@@ -202,20 +280,76 @@ function ProfileScreen({ go }) {
           <div style={{ position: 'relative', width: 104, height: 104, borderRadius: 999, background: 'var(--card)',
             border: `2px solid ${accent}`, boxShadow: `0 0 28px ${accent}55`,
             display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontFamily: t.fontMono, fontSize: 26, fontWeight: 700, letterSpacing: '0.08em', color: accent }}>CLEO</span>
+            <span style={{ fontFamily: t.fontMono, fontSize: avatarFont, fontWeight: 700, letterSpacing: '0.08em',
+              color: accent, padding: '0 6px', textAlign: 'center', wordBreak: 'break-word', lineHeight: 1.05 }}>{avatarText}</span>
             <span style={{ position: 'absolute', bottom: 4, right: 4, width: 22, height: 22, borderRadius: 999,
               background: 'var(--a2)', border: '2px solid var(--paper)' }} />
           </div>
-          <Label style={{ color: 'var(--ink-faint)' }}>Jongno · 9 km walked</Label>
+
+          {editingName ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} autoFocus maxLength={40}
+                onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
+                placeholder="Your display name"
+                style={{ width: 168, padding: '8px 11px', borderRadius: t.radiusSm || 10, border: `1.5px solid ${accent}`,
+                  background: 'var(--card)', color: 'var(--ink)', fontFamily: t.fontUI, fontSize: 15, fontWeight: 700,
+                  textAlign: 'center', outline: 'none' }} />
+              <button onClick={saveName} title="Save" style={{ width: 36, height: 36, borderRadius: 999, border: 'none',
+                background: accent, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+              </button>
+            </div>
+          ) : (
+            <button onClick={beginEdit} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'transparent',
+              border: 'none', cursor: 'pointer', padding: 0 }}>
+              <span style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, fontSize: 22, letterSpacing: '-0.01em', color: 'var(--ink)' }}>{account.name}</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-faint)" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+            </button>
+          )}
+
+          {/* reconnect handle + switch-account, the recovery affordance */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {account.handle && (
+              <span style={{ fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.04em', color: 'var(--ink-faint)',
+                background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 999, padding: '4px 11px' }}
+                title="Type this handle on any device to bring your account back">
+                sign in as <b style={{ color: 'var(--ink-soft)' }}>{account.handle}</b>
+              </span>
+            )}
+            <button onClick={switchAccount} title="Forget this account on this device"
+              style={{ fontFamily: t.fontUI, fontSize: 11.5, fontWeight: 700, color: 'var(--ink-faint)',
+                background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px 4px', textDecoration: 'underline' }}>
+              Not you? Switch
+            </button>
+          </div>
         </div>
 
-        {/* add-friend actions */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '16px 20px 4px' }}>
-          <button style={{ width: 52, height: 44, borderRadius: t.radiusSm, cursor: 'pointer', background: 'var(--card)',
-            border: '1.5px solid var(--line)', color: 'var(--ink)', fontSize: 22, fontWeight: 700, lineHeight: 1 }}>+</button>
-          <button onClick={() => go('social')} style={{ flex: 1, maxWidth: 210, height: 44, borderRadius: t.radiusSm, cursor: 'pointer',
-            background: accent, color: '#FFFFFF', border: 'none', fontFamily: t.fontUI, fontSize: 15, fontWeight: 700,
-            boxShadow: `0 0 20px ${accent}44` }}>Add a friend profile</button>
+        {/* connect friends: share my code + add someone by theirs */}
+        <div style={{ padding: '16px 20px 4px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {/* my shareable friend code */}
+          {myCode && (
+            <button onClick={copyMyCode} title="Copy your code to share"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%', height: 44,
+                borderRadius: t.radiusSm, cursor: 'pointer', background: 'var(--card)', border: '1px solid var(--line)', boxShadow: 'var(--shadow)' }}>
+              <span style={{ fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Your code</span>
+              <span style={{ fontFamily: t.fontMono, fontSize: 17, fontWeight: 700, letterSpacing: '0.22em', color: 'var(--ink)' }}>{myCode}</span>
+              <span style={{ fontFamily: t.fontUI, fontSize: 11.5, fontWeight: 700, color: copied ? 'var(--good)' : accent }}>{copied ? 'Copied ✓' : 'Copy'}</span>
+            </button>
+          )}
+          {/* add a friend by their code */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input value={codeInput}
+              onChange={e => { setCodeInput(e.target.value.toUpperCase()); if (addErr) setAddErr(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') submitAddFriend(); }}
+              placeholder="Enter a friend's code" maxLength={12} autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+              style={{ flex: 1, minWidth: 0, height: 44, padding: '0 13px', borderRadius: t.radiusSm, border: '1.5px solid var(--line)',
+                background: 'var(--card)', color: 'var(--ink)', fontFamily: t.fontMono, fontSize: 15, letterSpacing: '0.12em', outline: 'none', boxSizing: 'border-box' }} />
+            <button onClick={submitAddFriend} disabled={!codeInput.trim() || addBusy}
+              style={{ flex: '0 0 auto', height: 44, padding: '0 18px', borderRadius: t.radiusSm, cursor: codeInput.trim() && !addBusy ? 'pointer' : 'default',
+                background: codeInput.trim() && !addBusy ? accent : 'var(--line)', color: codeInput.trim() && !addBusy ? '#fff' : 'var(--ink-faint)',
+                border: 'none', fontFamily: t.fontUI, fontSize: 14.5, fontWeight: 700 }}>{addBusy ? 'Adding…' : 'Add'}</button>
+          </div>
+          {addErr && <div style={{ fontSize: 12, color: 'var(--warn)', textAlign: 'center' }}>{addErr}</div>}
         </div>
 
         <div style={{ height: 1, margin: '20px 20px 0', background: 'var(--line)' }} />
@@ -270,14 +404,44 @@ function ProfileScreen({ go }) {
             <h2 style={{ margin: 0, fontFamily: t.fontHead, fontSize: 20, fontWeight: 500, color: 'var(--ink)' }}>Friends</h2>
             <Label style={{ color: 'var(--ink-faint)' }}>{friendCount} joining</Label>
           </div>
-          <div ref={friendsScroll.ref} onPointerDown={friendsScroll.onPointerDown} onPointerMove={friendsScroll.onPointerMove}
-            onPointerUp={friendsScroll.onPointerUp} onPointerCancel={friendsScroll.onPointerCancel}
-            onClickCapture={friendsScroll.onClickCapture} onWheel={friendsScroll.onWheel}
-            style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '4px 20px 6px', ...friendsScroll.style }}>
-            {PROFILE_FRIENDS.map(f => (
-              <FriendCard key={f.id} f={f} on={!!friends[f.id]} accent={accent} onClick={() => toggleFriend(f.id)} />
-            ))}
-          </div>
+          {friendList.length === 0 ? (
+            <div style={{ margin: '0 20px', padding: '18px', borderRadius: 18, border: '1.5px dashed var(--line-strong)',
+              fontSize: 13, color: 'var(--ink-soft)', textAlign: 'center', lineHeight: 1.5 }}>
+              No friends yet. Share <b style={{ color: 'var(--ink)' }}>your code</b> above, or enter a friend's code to connect —
+              then pick who joins this walk.
+            </div>
+          ) : (
+            <div ref={friendsScroll.ref} onPointerDown={friendsScroll.onPointerDown} onPointerMove={friendsScroll.onPointerMove}
+              onPointerUp={friendsScroll.onPointerUp} onPointerCancel={friendsScroll.onPointerCancel}
+              onClickCapture={friendsScroll.onClickCapture} onWheel={friendsScroll.onWheel}
+              style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '4px 20px 6px', ...friendsScroll.style }}>
+              {friendList.map(f => {
+                const name = f.display_name || f.friend_code || 'friend';
+                const card = { id: friendInitials(name), name: name, meta: f.friend_code || '' };
+                return <FriendCard key={f.participant_id} f={card} on={!!joining[f.participant_id]} accent={accent}
+                  onClick={() => toggleFriend(f.participant_id)} />;
+              })}
+            </div>
+          )}
+
+          {/* group taste — why the map will propose what it does, when friends join */}
+          {groupChips.length > 0 && (
+            <div style={{ margin: '14px 20px 0', padding: '13px 15px', borderRadius: 16,
+              background: 'color-mix(in srgb, ' + accent + ' 8%, var(--card))', border: `1px solid ${accent}55` }}>
+              <div style={{ fontFamily: t.fontMono, fontSize: 10.5, letterSpacing: '0.14em', textTransform: 'uppercase',
+                color: 'var(--ink-faint)', marginBottom: 8 }}>Together you lean toward</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 8 }}>
+                {groupChips.map(c => (
+                  <span key={c.key} style={{ fontFamily: t.fontMono, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
+                    fontWeight: 700, color: accent, background: 'var(--card)', border: `1.5px solid ${accent}`,
+                    borderRadius: 999, padding: '5px 11px' }}>{c.label}</span>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.4 }}>
+                The map blends everyone's taste — it'll favour streets that are <b style={{ color: 'var(--ink)' }}>{groupChips.map(c => c.label).join(' + ')}</b>, what you all like.
+              </div>
+            </div>
+          )}
         </section>
       </div>
 

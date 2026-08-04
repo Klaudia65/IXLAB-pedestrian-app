@@ -24,16 +24,42 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- WHO ------------------------------------------------------------------------
 
--- One row per study participant. `code` is the hand-assigned pseudonym typed at
--- launch; no real name or contact info is ever stored here.
+-- One row per study participant. Two distinct identity fields, on purpose:
+--   * `code`         the stable UNIQUE handle typed at launch (e.g. 'min'). It is
+--                    what a returning participant types to re-attach to THIS same
+--                    account after clearing local storage. Everything below hangs
+--                    off participant.id, so the handle can even be renamed without
+--                    orphaning any data.
+--   * `display_name` the free, editable label shown in the profile ("Min"). NOT
+--                    unique: two people can both display "min". Defaults to `code`.
+-- No real name or contact info is ever stored here.
 CREATE TABLE IF NOT EXISTS participant (
-    id          SERIAL PRIMARY KEY,
-    code        VARCHAR(20) UNIQUE NOT NULL,   -- e.g. 'P07', assigned by the researcher
-    condition   VARCHAR(10),                   -- planned study arm: 'solo' | 'friends' (nullable)
-    consent_at  TIMESTAMPTZ,                   -- when the participant accepted the consent screen
-    user_agent  TEXT,                          -- device/browser string, for debugging field issues
-    created_at  TIMESTAMPTZ DEFAULT NOW()
+    id           SERIAL PRIMARY KEY,
+    code         VARCHAR(20) UNIQUE NOT NULL,   -- stable unique handle, typed at launch
+    display_name VARCHAR(40),                   -- free editable label shown in the app
+    friend_code  VARCHAR(12) UNIQUE,            -- short shareable code others use to add you (not the id)
+    condition    VARCHAR(10),                   -- planned study arm: 'solo' | 'friends' (nullable)
+    consent_at   TIMESTAMPTZ,                   -- when the participant accepted the consent screen
+    user_agent   TEXT,                          -- device/browser string, for debugging field issues
+    created_at   TIMESTAMPTZ DEFAULT NOW()
 );
+-- Idempotent adds for databases created before these columns existed.
+ALTER TABLE participant ADD COLUMN IF NOT EXISTS display_name VARCHAR(40);
+ALTER TABLE participant ADD COLUMN IF NOT EXISTS friend_code  VARCHAR(12) UNIQUE;
+
+-- A mutual friendship between two participants. Stored ONCE per pair in canonical
+-- order (a_id < b_id) so the same couple can't be inserted twice from either
+-- direction. For a lab study friendship is instant & mutual (no accept step): the
+-- moment you enter someone's friend_code, this edge exists for both of you. The
+-- CHECK stops self-friendship; a participant's friends = every row touching them.
+CREATE TABLE IF NOT EXISTS friendship (
+    a_id        INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    b_id        INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (a_id, b_id),
+    CHECK (a_id < b_id)
+);
+CREATE INDEX IF NOT EXISTS idx_friendship_b ON friendship (b_id);
 
 -- A group of friends walking together (only used for the "friends" condition).
 -- `code` is a short join code so several phones can attach to the same group.

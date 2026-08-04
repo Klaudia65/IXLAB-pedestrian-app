@@ -12,7 +12,8 @@ from pydantic import BaseModel
 # --- session lifecycle ------------------------------------------------------
 
 class SessionCreate(BaseModel):
-    code: str                        # participant code, typed at launch (e.g. 'P07')
+    code: str                        # stable unique handle, typed at launch (e.g. 'min')
+    display_name: str | None = None  # free editable label; defaults to `code` on first creation
     mode: str = "solo"               # 'solo' | 'friends'
     group_code: str | None = None    # join code for the friends condition
     consented: bool = False          # did the participant accept the consent screen
@@ -20,9 +21,33 @@ class SessionCreate(BaseModel):
     user_agent: str | None = None
 
 
+class FriendOut(BaseModel):
+    participant_id: int
+    display_name: str | None = None
+    friend_code: str | None = None
+    profile: dict[str, float | None] | None = None   # friend's latest vector, for taste merge
+
+
 class SessionCreated(BaseModel):
     session_id: int
     participant_id: int
+    display_name: str | None = None                  # the account's current display label
+    friend_code: str | None = None                   # my own shareable code (others enter it to add me)
+    is_returning: bool = False                       # True if the handle already existed (recovery)
+    profile: dict[str, float | None] | None = None   # latest saved preference vector, for rehydration
+    friends: list[FriendOut] = []                    # my current friends (with their vectors)
+
+
+class RenameIn(BaseModel):
+    display_name: str                # new free display label for the session's participant
+
+
+class AddFriendIn(BaseModel):
+    friend_code: str                 # the code shown on the other person's phone
+
+
+class FriendsOut(BaseModel):
+    friends: list[FriendOut] = []
 
 
 # --- onboarding & profile ---------------------------------------------------
