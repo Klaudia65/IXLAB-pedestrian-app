@@ -116,26 +116,44 @@ function ConsentGate({ onDone }) {
   );
 }
 
-// Global "someone added you" toasts. Listens for the app-wide friends poll's
-// 'seoulwalk:friends' event and, for each newcomer in `added`, slides a pill up
-// from the bottom of the phone for a few seconds. Rendered inside the DeviceFrame
-// so it's themed and clipped to the screen, and shows on ANY screen.
+// Global social toasts. Listens for the app-wide friends poll and slides pills up
+// from the bottom of the phone for a few seconds. Two kinds:
+//   · 'add'    — someone entered your code ('seoulwalk:friends' → `added`).
+//   · 'search' — a friend ON THIS WALK keeps searching the same category twice+
+//                ('seoulwalk:friendsearch' → `searches`), a "want to go together?"
+//                nudge. Gated to joining friends so it only fires when you're
+//                actually out together.
+// Rendered inside the DeviceFrame so it's themed, clipped, and shows on ANY screen.
 function FriendToasts() {
   const t = React.useContext(ThemeCtx);
   const [toasts, setToasts] = React.useState([]);
   const seq = React.useRef(0);
   React.useEffect(() => {
+    const push = (toast, ttl) => {
+      const id = 'ft' + (seq.current++);
+      setToasts(prev => [...prev, { id, ...toast }]);
+      setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), ttl);
+    };
     function onFriends(e) {
       const added = (e.detail && e.detail.added) || [];
-      added.forEach(f => {
-        const id = 'ft' + (seq.current++);
-        const name = f.display_name || f.friend_code || 'A friend';
-        setToasts(prev => [...prev, { id, name }]);
-        setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 4800);
+      added.forEach(f => push({ kind: 'add', name: f.display_name || f.friend_code || 'A friend' }, 4800));
+    }
+    function onFriendSearch(e) {
+      const searches = (e.detail && e.detail.searches) || [];
+      // Only nudge for friends currently toggled onto this walk.
+      const joining = (window.activeJoiningFriends && window.activeJoiningFriends()) || [];
+      const withMe = new Set(joining.map(f => String(f.participant_id)));
+      searches.forEach(s => {
+        if (!withMe.has(String(s.participant_id))) return;
+        push({ kind: 'search', name: s.display_name || 'A friend', query: s.query, count: s.count }, 6500);
       });
     }
     window.addEventListener('seoulwalk:friends', onFriends);
-    return () => window.removeEventListener('seoulwalk:friends', onFriends);
+    window.addEventListener('seoulwalk:friendsearch', onFriendSearch);
+    return () => {
+      window.removeEventListener('seoulwalk:friends', onFriends);
+      window.removeEventListener('seoulwalk:friendsearch', onFriendSearch);
+    };
   }, []);
   if (!toasts.length) return null;
   return (
@@ -148,10 +166,12 @@ function FriendToasts() {
           boxShadow: '0 10px 34px rgba(0,0,0,0.30)', animation: 'ftIn .32s cubic-bezier(.22,1,.36,1)' }}>
           <span style={{ width: 28, height: 28, borderRadius: 999, flex: '0 0 auto', background: 'var(--accent)', color: '#fff',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.fontMono, fontSize: 11, fontWeight: 700 }}>
-            {String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
+            {ft.kind === 'search' ? '🔎' : String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
           </span>
           <span style={{ fontFamily: t.fontUI, fontSize: 13.5, fontWeight: 600 }}>
-            <b>{ft.name}</b> added you as a friend
+            {ft.kind === 'search'
+              ? <span><b>{ft.name}</b> keeps looking for <b>{ft.query}</b> — go together?</span>
+              : <span><b>{ft.name}</b> added you as a friend</span>}
           </span>
         </div>
       ))}

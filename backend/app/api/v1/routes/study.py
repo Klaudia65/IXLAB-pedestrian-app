@@ -24,7 +24,9 @@ from app.models.schemas.study import (
     AppEventIn,
     CountOut,
     FavoriteIn,
+    FriendActivityOut,
     FriendOut,
+    FriendSearchOut,
     FriendsOut,
     GpsPointIn,
     OnboardingChoiceIn,
@@ -235,6 +237,39 @@ async def list_friends(session_id: int, db: AsyncSession = Depends(get_db)):
     """List the session participant's current friends (with their taste vectors)."""
     pid = await _participant_of_session(db, session_id)
     return FriendsOut(friends=await _fetch_friends(db, pid))
+
+
+@router.get("/{session_id}/friends/activity", response_model=FriendActivityOut)
+async def friends_activity(
+    session_id: int,
+    window_min: int = 45,
+    min_count: int = 2,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent, repeated searches by the session participant's FRIENDS.
+
+    Powers the "your friend keeps looking for cafés" nudge: for every friend, we
+    group their search events from the last `window_min` minutes by (query, kind)
+    and return the buckets they hit at least `min_count` times. The client diffs
+    the counts against what it has already shown, so a bucket only pops once per
+    new repeat. Clamped so a bad query string can't ask for an unbounded window."""
+    pid = await _participant_of_session(db, session_id)
+    window_min = max(1, min(window_min, 720))     # 1 min … 12 h
+    min_count = max(2, min(min_count, 50))
+    rows = (await db.execute(text("""
+        SELECT p.id AS participant_id, p.display_name,
+               se.query, se.kind, COUNT(*) AS count, MAX(se.ts) AS last_ts
+        FROM friendship f
+        JOIN participant p
+          ON p.id = CASE WHEN f.a_id = :pid THEN f.b_id ELSE f.a_id END
+        JOIN search_event se ON se.participant_id = p.id
+        WHERE (f.a_id = :pid OR f.b_id = :pid)
+          AND se.ts > NOW() - make_interval(mins => :win)
+        GROUP BY p.id, p.display_name, se.query, se.kind
+        HAVING COUNT(*) >= :minc
+        ORDER BY MAX(se.ts) DESC
+    """), {"pid": pid, "win": window_min, "minc": min_count})).mappings().all()
+    return FriendActivityOut(activity=[FriendSearchOut(**row) for row in rows])
 
 
 @router.post("/{session_id}/friends", response_model=FriendsOut)

@@ -107,6 +107,21 @@ class SearchIn(BaseModel):
     kind: str | None = None          # 'vibe' | 'function' | 'place'
 
 
+class FriendSearchOut(BaseModel):
+    """A category a friend has been searching for repeatedly (used to nudge the
+    walker: 'your friend keeps looking for cafés')."""
+    participant_id: int
+    display_name: str | None = None
+    query: str                       # the searched term / category label
+    kind: str | None = None
+    count: int                       # how many times within the recent window
+    last_ts: datetime                # most recent occurrence
+
+
+class FriendActivityOut(BaseModel):
+    activity: list[FriendSearchOut] = []
+
+
 class FavoriteIn(BaseModel):
     street_name: str | None = None
     edge_id: str | None = None

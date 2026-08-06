@@ -445,6 +445,39 @@ function buildRouteIndex(net) {
   return { normName, adj, nameToId };
 }
 
+// Set of routing-graph EDGE ids that lie INSIDE the given park walks: an edge whose
+// BOTH endpoints sit within ~thresholdM of a park polyline. Park mode feeds these to
+// the orienteering as high-value prizes so the walk actually dips into a park (the
+// paths inside parks are mostly unnamed connectors, so they'd never be prizes on
+// their own). A coarse metre-grid over the nodes keeps the snap near O(vertices).
+function parkEdgeSet(net, walkFeats, thresholdM = 22) {
+  const MLAT = 111320, MLNG = 111320 * Math.cos(37.57 * Math.PI / 180);
+  const cell = thresholdM;   // grid cell ≈ the snap radius, so 3×3 cells always cover it
+  const gkey = (gx, gy) => gx + ',' + gy;
+  const grid = new Map();
+  net.nodes.forEach((p, i) => {
+    const k = gkey(Math.floor(p[0] * MLNG / cell), Math.floor(p[1] * MLAT / cell));
+    const bucket = grid.get(k); if (bucket) bucket.push(i); else grid.set(k, [i]);
+  });
+  const parkNodes = new Set(), th2 = thresholdM * thresholdM;
+  (walkFeats || []).forEach(f => {
+    if (!f || !f.geometry) return;
+    coordsOf(f.geometry).forEach(([lng, lat]) => {
+      const gx = Math.floor(lng * MLNG / cell), gy = Math.floor(lat * MLAT / cell);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const bucket = grid.get(gkey(gx + dx, gy + dy)); if (!bucket) continue;
+        for (const ni of bucket) {
+          const q = net.nodes[ni], ex = (q[0] - lng) * MLNG, ey = (q[1] - lat) * MLAT;
+          if (ex * ex + ey * ey <= th2) parkNodes.add(ni);
+        }
+      }
+    });
+  });
+  const edges = new Set();
+  net.edges.forEach((e, ei) => { if (parkNodes.has(e[0]) && parkNodes.has(e[1])) edges.add(ei); });
+  return edges;
+}
+
 // Map a list of street names (the displayed vibe results) to the net's name ids —
 // the prize set the walk should connect.
 function nameIdSet(idx, names) {
@@ -529,25 +562,36 @@ function planWalk(net, idx, weights, startNode, budgetM, opt) {
   const avoidPenalty = opt.avoidPenalty != null ? opt.avoidPenalty : 0.2;
   const minBudgetM = opt.minBudgetM != null ? opt.minBudgetM : WALK_MIN_BUDGET_M;
   const farM = opt.farM != null ? opt.farM : WALK_FAR_M;
+  const parkEdges = opt.parkEdges || null;                     // edges inside a park walk (Park mode)
+  const parkReward = opt.parkReward || 0;                      // vibe-reward bonus for stepping into a park
+  const parkCapM = opt.parkCapM != null ? opt.parkCapM : 0.5 * budgetM;  // aim for ~half the walk inside parks, then head back to the vibe streets
   const N = net.nodes.length;
   const { adj } = idx;
   const { reward: rewardOf } = vibeRewardFn(net, idx, weights);
+  // Reward for traversing edge `ei`: its street's vibe alignment plus a park bonus
+  // when the edge lies inside a park walk — this is what pulls the route into a park.
+  const edgeReward = (ei) => rewardOf(net.edges[ei][3]) + (parkEdges && parkEdges.has(ei) ? parkReward : 0);
+  const isParkEdge = (ei) => !!(parkEdges && parkEdges.has(ei));
   const RCL = 3, MAX_STEPS = 60;
   const used = new Set();
-  let cur = startNode, len = 0, reward = 0;
+  let cur = startNode, len = 0, reward = 0, parkLen = 0;   // parkLen: metres already walked inside parks
   const path = [startNode], edges = [];
   for (let step = 0; step < MAX_STEPS; step++) {
     const { dist, pN, pE } = dijkstra(adj, N, cur);
+    // Spend up to ~half the walk inside parks (parkCapM), then stop treating park
+    // edges as prizes so the route heads back to the vibe streets for the rest.
+    const parkActive = parkLen < parkCapM;
     // candidate prizes: a named street, in the prize set (if any), clearing the
     // minimum-criteria bar, reachable within the remaining budget.
     const cands = [];
     for (let ei = 0; ei < net.edges.length; ei++) {
       if (used.has(ei)) continue;
       const nid = net.edges[ei][3];
-      if (nid < 0) continue;
-      if (prizeIds && !prizeIds.has(nid)) continue;
-      const r = rewardOf(nid);
-      if (r < minReward) continue;                 // minimum-criteria gate
+      const isPark = isParkEdge(ei) && parkActive;   // park edge, still under the cap
+      if (nid < 0 && !isPark) continue;                    // unnamed connector, not a park edge
+      if (prizeIds && !prizeIds.has(nid) && !isPark) continue;  // park edges bypass the prize-set restriction
+      const r = (nid >= 0 ? rewardOf(nid) : 0) + (isPark ? parkReward : 0);
+      if (r < minReward && !isPark) continue;      // minimum-criteria gate — park edges always qualify
       const e = net.edges[ei], u = e[0], v = e[1], el = e[2];
       const dNear = Math.min(dist[u], dist[v]);
       if (!isFinite(dNear) || len + dNear + el > budgetM) continue;
@@ -569,33 +613,83 @@ function planWalk(net, idx, weights, startNode, budgetM, opt) {
     for (let n = pick.near; n !== cur && n !== -1; n = pN[n]) seg.push({ node: n, ei: pE[n] });
     seg.reverse();
     for (const s of seg) {
-      if (!used.has(s.ei)) { used.add(s.ei); reward += rewardOf(net.edges[s.ei][3]); }
+      if (!used.has(s.ei)) { used.add(s.ei); reward += edgeReward(s.ei); if (isParkEdge(s.ei)) parkLen += net.edges[s.ei][2]; }
       len += net.edges[s.ei][2]; path.push(s.node); edges.push(s.ei);
     }
     // traverse the prize edge near → far
-    if (!used.has(pick.ei)) { used.add(pick.ei); reward += pick.r; }
+    if (!used.has(pick.ei)) { used.add(pick.ei); reward += pick.r; if (isParkEdge(pick.ei)) parkLen += pick.el; }
     len += pick.el; path.push(pick.far); edges.push(pick.ei);
     cur = pick.far;
   }
   return path.length > 1 ? { path, edges, len, reward } : null;
 }
 
-// Turn a routing result into (a) the route LineString for the map, and (b) an
-// ordered list of the distinct named streets it walks, with metres on each — the
-// human-readable itinerary shown in the sheet.
-function describeWalk(net, plan) {
-  const line = { type: 'Feature', geometry: { type: 'LineString', coordinates: plan.path.map(i => net.nodes[i]) }, properties: {} };
-  const legs = [];
+// walk-net edge names can be a Python list-repr — OSMnx stores a dual-named edge as
+// e.g. "['삼청로', '청와대로']" — which never matches the sentence/photo indices AND
+// renders as that raw string on the map/sheet. cleanNames() parses those into their
+// component street names (a plain name → [name]); displayName() is the primary one.
+function cleanNames(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (/^\[.*\]$/.test(s)) {
+    const toks = (s.match(/['"]([^'"]+)['"]/g) || []).map(x => x.slice(1, -1));
+    if (toks.length) return toks;
+  }
+  return s ? [s] : [];
+}
+function displayName(raw) { const c = cleanNames(raw); return c[0] || String(raw == null ? '' : raw); }
+// normalise a name for matching (strip spaces/hyphens, lowercase) so index lookups
+// are tolerant of formatting differences between the datasets.
+function normName(s) { return String(s == null ? '' : s).replace(/[\s\-]/g, '').toLowerCase().trim(); }
+// look a walk-net name up in a NORMALISED index: try each of its component names
+// (so a dual-named edge matches on either street) and return the first hit.
+function lookupByNames(raw, normIdx) {
+  if (!normIdx) return null;
+  for (const nm of cleanNames(raw)) { const hit = normIdx[normName(nm)]; if (hit) return hit; }
+  return null;
+}
+
+// Turn a routing result into everything the map + sheet need:
+//   line      the full-walk LineString (for fitting the camera / telemetry)
+//   routeFC   one feature per MERGED leg, tagged { vibe, t, name } — this is what
+//             the segmented route layers paint (vibe thick+directional, connectors
+//             faded), and what the leg labels ride on.
+//   sequence  the ordered départ→…→arrivée steps for the sheet: a { leg } for each
+//             named street (with metres + whether it clears the vibe bar) and a
+//             { connector } for each unnamed linking stretch.
+//   legs      named streets only (kept for describePlace + the marquee pick).
+//   startPoint / endPoint  the two ends — the open walk finishes away from the start.
+// `isVibeLeg(name)` decides which named legs are "yours" (the strong matches); a
+// leg with no name is always a connector.
+function describeWalk(net, plan, isVibeLeg) {
+  const coords = plan.path.map(i => net.nodes[i]);
+  // group consecutive edges into runs by street name (null = connector run)
+  const runs = [];
   plan.edges.forEach((ei, k) => {
     const e = net.edges[ei];
     const name = e[3] >= 0 ? net.names[e[3]] : null;
-    const midNode = net.nodes[plan.path[k]];
-    const last = legs[legs.length - 1];
-    if (name && last && last.name === name) { last.m += e[2]; }         // same street continues
-    else if (name) legs.push({ name, m: e[2], at: midNode });
-    // unnamed connectors are walked but not listed as a "street"
+    const b = net.nodes[plan.path[k + 1]];
+    const last = runs[runs.length - 1];
+    if (last && last.name === name) { last.m += e[2]; last.coords.push(b); }
+    else runs.push({ name, m: e[2], coords: [net.nodes[plan.path[k]], b] });
   });
-  return { line, legs };
+  const total = plan.len || runs.reduce((s, r) => s + r.m, 0) || 1;
+  const features = [], sequence = [];
+  let acc = 0;
+  runs.forEach(r => {
+    const tMid = (acc + r.m / 2) / total; acc += r.m;
+    const vibe = r.name ? (isVibeLeg ? !!isVibeLeg(r.name) : true) : false;
+    const disp = r.name ? displayName(r.name) : '';   // clean, human name (parses list-repr)
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.coords },
+      properties: { name: disp, vibe: vibe ? 1 : 0, t: tMid } });
+    if (r.name) sequence.push({ type: 'leg', name: disp, rawName: r.name, m: Math.round(r.m), vibe, at: r.coords[Math.floor(r.coords.length / 2)] });
+    else sequence.push({ type: 'connector', m: Math.round(r.m) });
+  });
+  const legs = runs.filter(r => r.name).map(r => ({ name: r.name, m: r.m, at: r.coords[Math.floor(r.coords.length / 2)] }));
+  return {
+    line: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} },
+    routeFC: { type: 'FeatureCollection', features }, sequence, legs,
+    startPoint: coords[0], endPoint: coords[coords.length - 1],
+  };
 }
 
 // Describe WHERE a walk goes without naming streets: find the landmarks it runs
@@ -643,9 +737,13 @@ function describePlace(net, path, legs) {
 // drop a strategy whose route duplicates an earlier one.
 const MIN_CRIT_FRAC = 0.30;   // "at least ~30% aligned with your sliders"
 const NEARBY_BUDGET_M = 25 * WALK_SPEED_M_MIN;   // ~25 min for the short local option
-function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds) {
+function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds, parkEdges) {
   const { reward: rewardOf, wsum } = vibeRewardFn(net, idx, weights);
   const minCrit = MIN_CRIT_FRAC * wsum;
+  // Park mode: reward for stepping into a park walk. Sized ~ a perfectly-aligned
+  // street (wsum) so parks compete fairly with the top vibe streets and at least one
+  // gets threaded in — but not so high the route beelines to a park ignoring the vibe.
+  const parkReward = parkEdges && parkEdges.size ? Math.max(wsum, 0.8) : 0;
   const isVibe = (name) => { const id = idx.nameToId.get(name); return id != null && rewardOf(id) >= minCrit; };
   const strategies = [
     { label: 'Your top streets', budget: budgetM, opt: { prizeIds: displayedIds, minReward: -Infinity, detourExp: 1 } },
@@ -660,6 +758,7 @@ function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds) {
     for (let tries = 0; tries < 6; tries++) {
       const o = Object.assign({}, st.opt);
       if (st.label === 'Explore more') o.avoidNames = usedNames;
+      if (parkReward) { o.parkEdges = parkEdges; o.parkReward = parkReward; }
       const plan = planWalk(net, idx, weights, startNode, st.budget, o);
       if (!plan || plan.path.length < 2) continue;
       // rank runs by vibe DENSITY (reward per metre), not total reward — otherwise
@@ -668,7 +767,7 @@ function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds) {
       if (density > bestDensity) { bestDensity = density; best = plan; }
     }
     if (!best) continue;
-    const { line, legs } = describeWalk(net, best);
+    const { line, routeFC, sequence, legs, endPoint } = describeWalk(net, best, isVibe);
     const streets = [...new Set(legs.map(l => l.name))];
     const key = streets.join('>');
     if (seenKeys.has(key)) continue;            // skip a duplicate route
@@ -676,7 +775,12 @@ function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds) {
     const yours = streets.filter(isVibe);       // the streets that meet the criteria
     yours.forEach(s => usedNames.add(s));        // feed diversity for the next strategy
     const { where, areas } = describePlace(net, best.path, legs);
-    out.push({ label: st.label, line, legs, streets, yours, isVibe, where, areas,
+    // marquee = the walk's strongest vibe street (the one to preview): highest
+    // reward among "yours"; falls back to the longest named leg if none qualify.
+    const marquee = yours.length
+      ? yours.map(n => ({ n, r: rewardOf(idx.nameToId.get(n)) })).sort((a, b) => b.r - a.r)[0].n
+      : (legs.length ? legs.slice().sort((a, b) => b.m - a.m)[0].name : null);
+    out.push({ label: st.label, line, routeFC, sequence, legs, streets, yours, isVibe, where, areas, marquee, endPoint,
       len: best.len, reward: best.reward, min: Math.round(best.len / WALK_SPEED_M_MIN) });
   }
   return out;
@@ -1107,6 +1211,123 @@ function MapTabBar({ tab, setTab }) {
 }
 
 /* ============================================================
+   ROUTE SEQUENCE — the drawn walk presented in the sheet as an
+   ordered départ → … → arrivée itinerary (an OPEN walk, so it ends
+   at a distinct ◆ finish, not back at the ● start):
+     · an "anticipation" card up top — a curated photo of the walk's
+       strongest vibe street + its LLM ambiance sentence (ko + en),
+       so the user sees what's coming before setting off;
+     · a legend (vibe segment vs link);
+     · a vertical timeline where vibe legs are bold accent cards and
+       connectors collapse to a discreet "N min link" row.
+   Tapping any leg pans the map to that stretch (onPan).
+   ============================================================ */
+function RouteSequence({ stats, seq, onPan }) {
+  const t = React.useContext(ThemeCtx);
+  if (!stats) return null;
+  const m = stats.marquee;
+  const min = (metres) => Math.max(1, Math.round(metres / WALK_SPEED_M_MIN));
+  const rail = (node, tail) => (
+    <div style={{ flex: '0 0 22px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      {node}
+      {tail}
+    </div>
+  );
+  const bar = (conn) => (
+    <div style={{ width: conn ? 2 : 4, flex: 1, minHeight: 14, borderRadius: 2, margin: '2px 0',
+      background: conn ? 'repeating-linear-gradient(var(--line-strong),var(--line-strong) 3px,transparent 3px,transparent 6px)' : 'var(--accent)' }} />
+  );
+  const dot = (style) => <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', border: '2.5px solid var(--accent)', marginTop: 2, ...style }} />;
+  return (
+    <div>
+      {/* anticipation card — ONLY when there's a photo (the real preview value). Its
+          LLM sentence is dropped here because it already appears in the street's step
+          card below; with no photo the card would just duplicate that text, so we skip it. */}
+      {m && m.photoSrc && (
+        <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid var(--line)', marginBottom: 16, position: 'relative' }}>
+          <div style={{ position: 'relative' }}>
+            <img src={m.photoSrc} alt={m.name} style={{ display: 'block', width: '100%', height: 150, objectFit: 'cover' }} />
+            <span style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(20,50,41,.82)', color: '#fff',
+              fontSize: 10, fontWeight: 700, padding: '4px 9px', borderRadius: 999, letterSpacing: '.04em' }}>The highlight of your walk</span>
+          </div>
+          <div style={{ padding: '11px 13px 12px' }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--ink)' }}>{m.name}</div>
+            {m.credit && <div style={{ fontSize: 9.5, color: 'var(--ink-faint)', marginTop: 7 }}>Photo {m.credit} · already blurred</div>}
+          </div>
+        </div>
+      )}
+
+      {/* legend */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '0 2px 14px', fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600 }}>
+        <span><i style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6, width: 22, height: 5, borderRadius: 3, background: 'var(--accent)' }} />matches your vibe</span>
+        <span><i style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6, width: 22, height: 0, borderTop: '2px dashed #9db0ac' }} />link</span>
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', margin: '2px 0 10px' }}>Start → … → finish</div>
+
+      {/* timeline */}
+      <div>
+        {/* start */}
+        <div style={{ display: 'flex', gap: 12 }}>
+          {rail(dot({ background: 'var(--accent)' }), bar(true))}
+          <div style={{ flex: 1, paddingBottom: 14, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)' }}>Start</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-faint)', marginTop: 2 }}>your position</div>
+          </div>
+        </div>
+
+        {(seq || []).map((s, i) => {
+          if (s.type === 'connector') {
+            return (
+              <div key={'s' + i} style={{ display: 'flex', gap: 12 }}>
+                {rail(<div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff', border: '2px solid var(--line-strong)', marginTop: 4 }} />, bar(true))}
+                <div style={{ flex: 1, paddingBottom: 12, minWidth: 0 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--ink-faint)', padding: '4px 0' }}>{min(s.m)} min link</div>
+                </div>
+              </div>
+            );
+          }
+          // a named leg — bold accent card if it's a vibe street, modest row otherwise
+          return (
+            <div key={'s' + i} style={{ display: 'flex', gap: 12 }}>
+              {rail(dot(s.vibe ? {} : { borderColor: 'var(--line-strong)' }), bar(!s.vibe))}
+              <div style={{ flex: 1, paddingBottom: 14, minWidth: 0 }}>
+                {s.vibe ? (
+                  <button onClick={() => onPan && onPan(s.at, s.name)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+                      background: 'var(--accent-soft)', border: '1px solid #cfd4ff', borderRadius: 12, padding: '10px 12px' }}>
+                    <span style={{ display: 'inline-block', fontSize: 9.5, fontWeight: 800, letterSpacing: '.05em', color: 'var(--accent)',
+                      background: '#fff', border: '1px solid #cfd4ff', borderRadius: 999, padding: '2px 7px', marginBottom: 6 }}>YOUR VIBE · {s.m} m</span>
+                    <span style={{ display: 'block', fontSize: 14, fontWeight: 800, color: 'var(--ink)' }}>{s.name}</span>
+                    {s.en && <span style={{ display: 'block', fontSize: 12, lineHeight: 1.45, fontWeight: 600, color: 'var(--ink-soft)', marginTop: 5 }}>{s.en}</span>}
+                    {s.ko && <span style={{ display: 'block', fontSize: 10.5, lineHeight: 1.4, color: 'var(--ink-faint)', marginTop: 2 }}>{s.ko}</span>}
+                  </button>
+                ) : (
+                  <button onClick={() => onPan && onPan(s.at, s.name)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer', background: 'transparent', border: 'none', padding: '2px 0' }}>
+                    <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--ink-soft)' }}>{s.name}</span>
+                    <span style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--ink-faint)', marginTop: 1 }}>{s.m} m</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* finish — a ◆ diamond, the open walk ends here */}
+        <div style={{ display: 'flex', gap: 12 }}>
+          {rail(<div style={{ width: 13, height: 13, background: 'var(--accent)', border: '2.5px solid var(--accent)', transform: 'rotate(45deg)', marginTop: 3 }} />, null)}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)' }}>Finish</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-faint)', marginTop: 2 }}>{stats.where || 'end of your walk'}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    THE MAP SCREEN
    ============================================================ */
 function RealMapScreen() {
@@ -1119,9 +1340,16 @@ function RealMapScreen() {
   const dongFeats = React.useRef([]);    // administrative dong polygons (neighbourhood search)
   const netRef = React.useRef(null);     // routing graph (walk-net-jongno.json)
   const routeIdxRef = React.useRef(null);// precomputed normalised axes + adjacency
+  const parkEdgesRef = React.useRef(null);// graph edges inside park walks (Park mode routing), memoised
   const startNodeRef = React.useRef(null);// fake-GPS start, snapped to a graph node
   const greenModeRef = React.useRef(readGreenMode()); // 'off' | 'leafy' | 'park'
   const natureMarkersRef = React.useRef([]);          // green name bubbles for park walks
+  const localsIdxRef = React.useRef({});   // street name → LLM ambiance sentence {ko, en}
+  const commerceIdxRef = React.useRef({}); // street name → parsed commerce signature [[cat, n], …]
+  const photoIdxRef = React.useRef({});    // street name → curated onboarding photo {src, credit}
+  const endMarkerRef = React.useRef(null); // ◆ route-end marker (open walk finishes elsewhere)
+  const anchorMarkersRef = React.useRef([]);// landmark anchor pins dropped along a drawn route
+  const panPopupRef = React.useRef(null);  // the single street label shown when a leg is tapped
 
   const [status, setStatus] = React.useState('Loading the neighbourhood…');
   const [tab, setTab] = React.useState('search');     // bottom nav: 'search' | 'locals'
@@ -1134,10 +1362,16 @@ function RealMapScreen() {
   // results array and never find the tapped street. The ref always holds latest.
   const resultsRef = React.useRef([]);
   resultsRef.current = results;
+  // Split a leading emoji off the title so the icon and label align on one row —
+  // a bare emoji left inside the head font sits off the text baseline otherwise.
+  const _titleMatch = (title || '').match(/^(\p{Extended_Pictographic}️?)\s+(.*)$/u);
+  const titleIcon = _titleMatch ? _titleMatch[1] : '';
+  const titleText = _titleMatch ? _titleMatch[2] : title;
   const [selected, setSelected] = React.useState(null);
   const [sheetOpen, setSheetOpen] = React.useState(true);
   const [showSliders, setShowSliders] = React.useState(false);  // in-map vibe sliders panel
-  const [routeStats, setRouteStats] = React.useState(null);  // {m, min, legs} of the drawn walk
+  const [routeStats, setRouteStats] = React.useState(null);  // {m, min, where, marquee} of the drawn walk
+  const [routeSeq, setRouteSeq] = React.useState(null);      // ordered départ→…→arrivée steps for the sheet
   const [walkOptions, setWalkOptions] = React.useState(null);// proposed walks joining the vibe streets
   const [vibeStreets, setVibeStreets] = React.useState(null);// the street list to return to from a walk
   const routeTargetRef = React.useRef(null);                 // the vibe target the streets came from
@@ -1201,15 +1435,35 @@ function RealMapScreen() {
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': MAP_PAL.good, 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 2.6, 16, 4.5, 19, 8] } });
 
-      // routing walk — a dashed accent route drawn on top of everything, with a
-      // white halo so it reads over the candidate/base street lines.
+      // routing walk — drawn on top of everything as SEGMENTS, not one uniform line,
+      // so the good bits stand out from the plumbing. The 'route' source holds one
+      // feature per merged leg with { vibe: 0/1, t: 0..1 along the walk, name }.
+      //   · vibe segments  → thick, solid, a light→deep accent ramp along t so the
+      //     open walk reads DIRECTIONALLY (start = light, finish = deep).
+      //   · connectors     → thin, faded, dashed — the parts that just link.
+      // A white halo under both lifts the whole route off the map.
       map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'route-halo', type: 'line', source: 'route',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: { 'line-color': '#FFFFFF', 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 8, 16, 13, 19, 20], 'line-opacity': 0.9 } });
-      map.addLayer({ id: 'route-line', type: 'line', source: 'route',
+      // connectors first (below the vibe segments)
+      map.addLayer({ id: 'route-conn', type: 'line', source: 'route',
+        filter: ['!', ['to-boolean', ['get', 'vibe']]],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': MAP_PAL.accent, 'line-width': ['interpolate', ['linear'], ['zoom'], 13, 4, 16, 7, 19, 11], 'line-dasharray': [1.4, 1.1] } });
+        paint: { 'line-color': '#8FA6A1', 'line-opacity': 0.7,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 13, 2, 16, 3.2, 19, 5], 'line-dasharray': [1.5, 1.6] } });
+      // vibe segments on top, coloured light→deep along the walk (direction cue)
+      map.addLayer({ id: 'route-vibe', type: 'line', source: 'route',
+        filter: ['to-boolean', ['get', 'vibe']],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': ['interpolate', ['linear'], ['get', 't'], 0, '#9AA6FF', 1, '#2B36B5'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 13, 5, 16, 7.5, 19, 11] } });
+      // named-street labels riding the vibe segments (the anchors on the legs)
+      map.addLayer({ id: 'route-labels', type: 'symbol', source: 'route', minzoom: 13.5,
+        filter: ['all', ['to-boolean', ['get', 'vibe']], ['has', 'name'], ['!=', ['get', 'name'], '']],
+        layout: { 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 13, 10, 18, 14], 'symbol-spacing': 250 },
+        paint: { 'text-color': '#2B36B5', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.8 } });
 
       // highlighted candidates — the "recommended paths", drawn as a real
       // "heat cloud" with MapLibre's native heatmap layer. A heatmap needs POINTS,
@@ -1266,6 +1520,22 @@ function RealMapScreen() {
       fetch('street-character-jongno.geojson').then(r => r.json()).then(gj => {
         if (cancelled) return;
         scFeats.current = (gj.features || []).filter(f => f.properties && f.properties.name);
+        // Index each street's commerce signature by name so the tap popup can show
+        // its top shops regardless of which search surfaced it (vibe/preset/place).
+        // A street is split into several segments sharing a name, so sum the shop
+        // counts per category across all of them for a representative signature.
+        const cagg = {};
+        scFeats.current.forEach(f => {
+          const k = normName(f.properties.name);
+          const bucket = cagg[k] || (cagg[k] = {});
+          parseCommerceWhy(f.properties.commerce_why).forEach(([cat, n]) => { bucket[cat] = (bucket[cat] || 0) + n; });
+        });
+        const cidx = {};
+        Object.keys(cagg).forEach(k => {
+          const cats = Object.entries(cagg[k]);
+          if (cats.length) cidx[k] = cats;
+        });
+        commerceIdxRef.current = cidx;
         map.getSource('streets-base').setData(gj);
         setStatus('');
       }).catch(() => setStatus('⚠️ street-character-jongno.geojson not found.'));
@@ -1285,6 +1555,33 @@ function RealMapScreen() {
         if (cancelled) return;
         dongFeats.current = (gj.features || []).filter(f => f.properties && f.properties.name);
       }).catch(() => { /* neighbourhood search just stays unavailable */ });
+
+      // LLM ambiance sentences (the "local favorite" thread) — indexed by street name
+      // so a drawn walk can show the character line of its strongest vibe street.
+      fetch('street-character-locals-jongno.geojson').then(r => r.json()).then(gj => {
+        if (cancelled) return;
+        const idx = {};
+        (gj.features || []).forEach(f => {
+          const p = f.properties || {};
+          const k = normName(p.name);
+          if (p.name && (p.description || p.description_en) && !idx[k])
+            idx[k] = { ko: p.description || '', en: p.description_en || '' };
+        });
+        localsIdxRef.current = idx;   // keyed by normalised street name (see lookupByNames)
+      }).catch(() => { /* anticipation sentence just stays unavailable */ });
+
+      // Curated street photos from the onboarding deck (window.SWIPE_CARDS, loaded by
+      // swipe-data.js): real Jongno shots, already face-blurred, each snapped to a
+      // street name. We reuse them as the walk's "anticipation" thumbnail instead of
+      // fetching Mapillary live — see the anticipation card in the route sheet.
+      try {
+        const idx = {};
+        (window.SWIPE_CARDS || []).forEach(c => {
+          const k = normName(c.place);
+          if (c.place && !idx[k]) idx[k] = { src: c.src, credit: c.credit || '' };
+        });
+        photoIdxRef.current = idx;   // keyed by normalised place name (see lookupByNames)
+      } catch (e) { /* no photos → route falls back to the sentence only */ }
 
       // routing graph — powers the "38-min walk" orienteering path. Once loaded,
       // snap the fake-GPS start to a node and drop a pulsing "you are here" puck.
@@ -1313,10 +1610,18 @@ function RealMapScreen() {
     if (!map) return;
     ['candidates', 'candidates-heat', 'green-cand', 'route', 'dong-region'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
     clearNatureBubbles();
+    clearRouteMarkers();
   }
   // Green name bubbles over each park walk (the "Park" greenery mode). DOM markers,
   // so they live outside React and must be added/removed explicitly.
   function clearNatureBubbles() { natureMarkersRef.current.forEach(m => m.remove()); natureMarkersRef.current = []; }
+  // The ◆ finish marker + the landmark anchor pins of a drawn walk are DOM markers
+  // too, so they must be torn down explicitly whenever the route is cleared/redrawn.
+  function clearRouteMarkers() {
+    if (endMarkerRef.current) { endMarkerRef.current.remove(); endMarkerRef.current = null; }
+    if (panPopupRef.current) { panPopupRef.current.remove(); panPopupRef.current = null; }
+    anchorMarkersRef.current.forEach(m => m.remove()); anchorMarkersRef.current = [];
+  }
   function setNatureBubbles(list) {
     const map = mapRef.current;
     clearNatureBubbles();
@@ -1406,17 +1711,43 @@ function RealMapScreen() {
     if (fit) fitTo([...streetList, ...natureList].map(r => r.feature), pad);
   }
 
-  // ROUTE highlight: draw the walk line and fit the view to it.
-  function showRoute(line) {
+  // ROUTE highlight: draw the walk as tagged SEGMENTS (vibe vs connector, coloured
+  // directionally), drop a ◆ finish marker (the open walk ends away from the ● start)
+  // and landmark anchor pins for the areas it passes, then fit the view to it.
+  function drawRoute(opt) {
     const map = mapRef.current;
     if (!map || !map.getSource('route')) return;
     clearHighlights();
-    map.getSource('route').setData({ type: 'FeatureCollection', features: [line] });
-    fitTo([line]);
+    map.getSource('route').setData(opt.routeFC || { type: 'FeatureCollection', features: [opt.line] });
+    // ◆ finish pin — a diamond, distinct from the round ● "you are here" start, so
+    // the user reads that an OPEN walk ends somewhere else (not back at the start).
+    if (opt.endPoint) {
+      const el = document.createElement('div');
+      el.style.cssText = 'width:15px;height:15px;background:' + MAP_PAL.accent +
+        ';border:3px solid #fff;transform:rotate(45deg);box-shadow:0 0 0 5px ' + MAP_PAL.accent + '33,0 2px 6px rgba(0,0,0,.4);';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;';
+      wrap.appendChild(el);
+      endMarkerRef.current = new maplibregl.Marker({ element: wrap })
+        .setLngLat(opt.endPoint)
+        .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML('<b>Finish</b><br>' + (opt.where || 'end of your walk')))
+        .addTo(map);
+    }
+    // landmark anchors — a small ink dot + label for each area the walk runs near.
+    (opt.areas || []).slice(0, 4).forEach(name => {
+      const L = LANDMARKS.find(l => l.name === name); if (!L) return;
+      const el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:5px;transform:translateX(4px);';
+      el.innerHTML =
+        '<span style="width:9px;height:9px;border-radius:50%;background:' + MAP_PAL.ink + ';border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);flex:0 0 auto;"></span>' +
+        '<span style="font-family:' + t.fontUI + ';font-weight:800;font-size:10.5px;color:' + MAP_PAL.ink + ';white-space:nowrap;text-shadow:0 0 3px #fff,0 0 3px #fff;">' + name + '</span>';
+      anchorMarkersRef.current.push(new maplibregl.Marker({ element: el, anchor: 'left' }).setLngLat(L.pts[0]).addTo(map));
+    });
+    fitTo([opt.line]);
   }
 
   // reset the walk state when a search is NOT a vibe/preset street list.
-  function resetWalk() { routeTargetRef.current = null; setVibeStreets(null); setWalkOptions(null); }
+  function resetWalk() { routeTargetRef.current = null; setVibeStreets(null); setWalkOptions(null); setRouteSeq(null); setRouteStats(null); }
 
   // ---- WALK PROPOSITION (join the displayed vibe streets into a route) ----
   // From the vibe street list the user is looking at, propose a few DISTINCT
@@ -1429,28 +1760,55 @@ function RealMapScreen() {
     if (!target || !streets || !streets.length) { setStatus('Set a vibe first.'); return; }
     const prizeIds = nameIdSet(idx, streets.map(s => s.name));
     if (!prizeIds.size) { setStatus('These streets aren’t on the walk network yet.'); return; }
-    const opts = makeWalkOptions(net, idx, target, start, WALK_BUDGET_M, prizeIds);
+    // Park mode: also feed the park-walk edges as prizes so the route dips into a
+    // park, not just the vibe streets. Memoised — the set doesn't depend on the vibe.
+    let parkEdges = null;
+    if (greenModeRef.current === 'park') {
+      if (!parkEdgesRef.current) {
+        const walkFeats = resolveNature(natureFeats.current).map(w => w.feature);
+        parkEdgesRef.current = parkEdgeSet(net, walkFeats);
+      }
+      parkEdges = parkEdgesRef.current;
+    }
+    const opts = makeWalkOptions(net, idx, target, start, WALK_BUDGET_M, prizeIds, parkEdges);
     if (!opts.length) { setStatus('Couldn’t build a walk from here.'); return; }
     setWalkOptions(opts); setKind('walk-options'); setTitle('Walks joining your streets');
     setSelected(null); setSheetOpen(true); setStatus('');
     clearHighlights();                       // hide the street highlight while choosing
   }
-  // Draw a chosen option and show its street-by-street itinerary.
+  // Draw a chosen option and present it as a départ→…→arrivée SEQUENCE. The map
+  // gets the segmented route (drawRoute); the sheet gets the marquee anticipation
+  // card + the ordered steps. `marquee` = the walk's strongest vibe street; we look
+  // up its curated photo + LLM ambiance sentence to preview what's coming.
   function chooseWalk(opt, i) {
-    // list the AREAS the walk passes (landmarks), not street names; clicking one
-    // pans to that landmark. Fall back to a single "where" row if it passes none.
-    const coords = opt.line.geometry.coordinates;
-    let rows = opt.areas.map(a => {
-      const L = LANDMARKS.find(l => l.name === a);
-      return { name: a, sub: 'along the way',
-        feature: { type: 'Feature', geometry: { type: 'Point', coordinates: L ? L.pts[0] : coords[0] }, properties: {} } };
-    });
-    if (!rows.length) rows = [{ name: opt.where, sub: '',
-      feature: { type: 'Feature', geometry: { type: 'Point', coordinates: coords[Math.floor(coords.length / 2)] }, properties: {} } }];
+    // Marquee = the street to preview. Prefer a vibe street that actually HAS a
+    // photo (the scarcest asset), then one with a sentence, else the strongest
+    // (reward-picked in makeWalkOptions) — so the anticipation card shows an image
+    // whenever any street on the walk has one, not only if the top street does.
+    const yrs = opt.yours || [];
+    const marqueeRaw = yrs.find(n => lookupByNames(n, photoIdxRef.current))
+      || yrs.find(n => lookupByNames(n, localsIdxRef.current))
+      || opt.marquee || yrs[0] || null;
+    const photo = lookupByNames(marqueeRaw, photoIdxRef.current);
+    const amb = lookupByNames(marqueeRaw, localsIdxRef.current);
+    const marquee = marqueeRaw ? {
+      name: displayName(marqueeRaw),
+      photoSrc: photo ? photo.src : null,
+      credit: photo ? photo.credit : '',
+      en: amb ? amb.en : '', ko: amb ? amb.ko : '',
+    } : null;
     setKind('route'); setTitle(opt.label);
-    setRouteStats({ m: opt.len, where: opt.where });
-    setResults(rows); setSelected(null); setSheetOpen(true);
-    showRoute(opt.line);
+    setRouteStats({ m: opt.len, min: opt.min, where: opt.where, yours: (opt.yours || []).length, marquee });
+    // enrich each named leg with its LLM ambiance sentence (the Local-favorite text),
+    // so the step card can describe the street, not just name it.
+    const seq = (opt.sequence || []).map(s => {
+      if (s.type !== 'leg') return s;
+      const amb = lookupByNames(s.rawName || s.name, localsIdxRef.current);
+      return amb && (amb.en || amb.ko) ? { ...s, en: amb.en, ko: amb.ko } : s;
+    });
+    setRouteSeq(seq);
+    setResults([]); setSelected(null); setSheetOpen(true);
+    drawRoute(opt);
     // study telemetry: record the proposed route and that it was chosen
     if (window.StudyAPI) {
       window.StudyAPI.logRoute({
@@ -1528,6 +1886,9 @@ function RealMapScreen() {
   // one entry point for every chip — routes green vs commerce categories.
   function runCategory(cat) {
     setQuery(''); resetWalk(); setShowSliders(false);
+    // Log the category tap so a friend's repeated interest (e.g. two taps on
+    // "Café & sweets") can surface as a nudge on the other walker's screen.
+    if (window.StudyAPI && window.StudyAPI.logSearch) window.StudyAPI.logSearch(cat.label, 'function');
     if (cat.kind === 'green') {
       const list = resolveNature(natureFeats.current);
       setKind('cat:' + cat.id); setTitle(`${cat.emoji} ${cat.label}`);
@@ -1574,19 +1935,72 @@ function RealMapScreen() {
     setRouteStats(null); resetWalk(); setShowSliders(false); setStatus('');
     clearHighlights();
   }
+  // Ease the camera to a coordinate — used when the user taps a leg in the route
+  // sequence to see where that stretch runs on the map. The results sheet covers the
+  // lower ~half of the screen, so we offset the target UP (negative y) to land it in
+  // the visible strip above the sheet instead of centring it under the panel.
+  function panToCoord(coord, name) {
+    const map = mapRef.current;
+    if (!map || !coord) return;
+    const h = (map.getContainer() && map.getContainer().clientHeight) || 700;
+    map.easeTo({ center: coord, zoom: Math.max(map.getZoom(), 15.4), offset: [0, -h * 0.26], duration: 500 });
+    // keep only ONE street label: drop the previous one, and let a tap elsewhere on
+    // the map dismiss it (closeOnClick) so labels never pile up.
+    if (panPopupRef.current) { panPopupRef.current.remove(); panPopupRef.current = null; }
+    if (name) panPopupRef.current = new maplibregl.Popup({ offset: 12, closeButton: false, closeOnClick: true, maxWidth: '220px' })
+      .setLngLat(coord)
+      .setHTML(`<b style="font-family:${t.fontUI};font-size:13px;color:${MAP_PAL.ink}">${name}</b>`)
+      .addTo(map);
+  }
 
   // Build the map popup for a result: name + descriptor, plus a three-dots (⋮)
   // menu. Hovering the dots reveals "Add path to favorites" (or "Remove…" when
   // already saved). Built as raw DOM because MapLibre popups live outside React.
   function buildPopupNode(r) {
     const el = document.createElement('div');
-    el.style.cssText = `font-family:${t.fontUI};min-width:150px;`;
+    el.style.cssText = `font-family:${t.fontUI};min-width:170px;max-width:230px;`;
 
     const title = document.createElement('div');
     title.textContent = r.name;
     title.style.cssText = `font-weight:700;font-size:13.5px;color:${MAP_PAL.ink};`;
     el.appendChild(title);
-    if (r.sub) {
+
+    // Ambiance sentence — the human "character" line (EN hero, KO companion).
+    const amb = lookupByNames(r.name, localsIdxRef.current);
+    if (amb && (amb.en || amb.ko)) {
+      const line = document.createElement('div');
+      line.textContent = amb.en || amb.ko;
+      line.style.cssText = `font-size:12px;line-height:1.45;font-weight:600;color:${MAP_PAL.ink};margin-top:5px;`;
+      el.appendChild(line);
+      if (amb.en && amb.ko) {
+        const ko = document.createElement('div');
+        ko.textContent = amb.ko;
+        ko.style.cssText = `font-size:11px;line-height:1.4;font-weight:400;color:${MAP_PAL.inkSoft};margin-top:3px;`;
+        el.appendChild(ko);
+      }
+    }
+
+    // Top shops — the street's commerce signature, most frequent categories first.
+    const cats = lookupByNames(r.name, commerceIdxRef.current);
+    if (cats && cats.length) {
+      const top = cats.slice().sort((a, b) => b[1] - a[1]).slice(0, 3).map(c => c[0]).join(' · ');
+      const shops = document.createElement('div');
+      shops.style.cssText = `display:flex;gap:5px;font-size:11px;line-height:1.4;color:${MAP_PAL.inkSoft};margin-top:6px;`;
+      const icon = document.createElement('span'); icon.textContent = '🏪'; icon.style.flexShrink = '0';
+      const txt = document.createElement('span'); txt.textContent = top;
+      shops.appendChild(icon); shops.appendChild(txt);
+      el.appendChild(shops);
+    }
+
+    // Match / descriptor line — keep the vibe match info small underneath, but skip
+    // it for a commerce search (its sub is the shop list we already show above).
+    if (r.sub && /match/.test(r.sub)) {
+      const sub = document.createElement('div');
+      sub.textContent = r.sub;
+      sub.style.cssText = `font-size:10.5px;color:${MAP_PAL.inkFaint};margin-top:6px;`;
+      el.appendChild(sub);
+    } else if (r.sub && !amb && !(cats && cats.length)) {
+      // fallback so the popup is never just a bare name
       const sub = document.createElement('div');
       sub.textContent = r.sub;
       sub.style.cssText = `font-size:11px;color:${MAP_PAL.inkSoft};margin-top:2px;`;
@@ -1678,8 +2092,22 @@ function RealMapScreen() {
           above the bottom tab bar. */}
       {tab === 'locals' && <LocalFavoriteView />}
 
+      {/* VIBE view: no bottom sheet — matched streets live on the map, so we only
+          dock a slim "make a walk" button just above the tab bar to save space. */}
+      {tab === 'search' && kind === 'vibe' && routeTargetRef.current && vibeStreets && vibeStreets.length > 0 && (
+        <button onClick={proposeWalks}
+          style={{ position: 'absolute', left: 14, right: 14, bottom: MAP_TAB_H + 12, zIndex: 10,
+            display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', border: 'none',
+            background: 'var(--accent)', color: 'var(--accent-ink)', borderRadius: 999, padding: '10px 16px',
+            boxShadow: '0 8px 24px -10px rgba(0,0,0,0.55)' }}>
+          <span style={{ fontSize: 15, lineHeight: 1 }}>🧭</span>
+          <span style={{ flex: 1, minWidth: 0, textAlign: 'left', fontSize: 13, fontWeight: 700 }}>Make a walk with these streets</span>
+          <span style={{ fontSize: 15, lineHeight: 1 }}>→</span>
+        </button>
+      )}
+
       {/* results bottom sheet — Search tab only, resting on top of the tab bar */}
-      {tab === 'search' && (results.length > 0 || (kind === 'walk-options' && walkOptions && walkOptions.length)) && (
+      {tab === 'search' && kind !== 'vibe' && (results.length > 0 || (kind === 'walk-options' && walkOptions && walkOptions.length) || (kind === 'route' && routeSeq && routeSeq.length)) && (
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: MAP_TAB_H, zIndex: 10, background: 'var(--card)',
           borderTopLeftRadius: t.radius + 4, borderTopRightRadius: t.radius + 4, borderTop: '1px solid var(--line)',
           boxShadow: '0 -18px 50px -28px rgba(0,0,0,0.5)', maxHeight: '58%', display: 'flex', flexDirection: 'column',
@@ -1692,7 +2120,7 @@ function RealMapScreen() {
                   if (kind === 'walk-options' && walkOptions)
                     return `${walkOptions.length} ways to walk your vibe`;
                   if (kind === 'route' && routeStats)
-                    return `${(routeStats.m / 1000).toFixed(1)} km walk`;
+                    return `${(routeStats.m / 1000).toFixed(1)} km · ~${routeStats.min} min${routeStats.yours ? ` · ${routeStats.yours} vibe street${routeStats.yours > 1 ? 's' : ''}` : ''}`;
                   const nWalk = results.filter(r => r.type === 'nature').length;
                   const nStreet = results.length - nWalk;
                   const plur = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
@@ -1700,27 +2128,16 @@ function RealMapScreen() {
                   if (nWalk) return plur(nWalk, 'nature walk');
                   return plur(nStreet, 'street');
                 })()}</Label>
-                <div style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, letterSpacing: t.headTrack, fontSize: 18, color: 'var(--ink)', marginTop: 2 }}>{title}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 2 }}>
+                  {titleIcon && <span style={{ fontSize: 17, lineHeight: 1, flexShrink: 0 }}>{titleIcon}</span>}
+                  <span style={{ fontFamily: t.fontHead, fontWeight: t.headWeight, letterSpacing: t.headTrack, fontSize: 18, lineHeight: 1.1, color: 'var(--ink)' }}>{titleText}</span>
+                </div>
               </div>
               <svg width="16" height="16" viewBox="0 0 16 16" style={{ flexShrink: 0, color: 'var(--ink-soft)', transform: sheetOpen ? 'rotate(180deg)' : 'none', transition: `transform .42s ${ease}` }}>
                 <path d="M3 10 L8 5 L13 10" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
           </div>
           <div style={{ overflowY: 'auto', padding: '4px 16px 26px', display: 'flex', flexDirection: 'column', gap: 7 }}>
-
-            {/* PROPOSITION — turn the shown vibe streets into a walk */}
-            {kind === 'vibe' && routeTargetRef.current && vibeStreets && vibeStreets.length > 0 && (
-              <button onClick={proposeWalks}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', cursor: 'pointer',
-                  border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', borderRadius: t.radiusSm, padding: '11px 13px', marginBottom: 3 }}>
-                <span style={{ fontSize: 17, lineHeight: 1 }}>🧭</span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700 }}>Make a walk with these streets</span>
-                  <span style={{ display: 'block', fontSize: 11, opacity: 0.85 }}>~{WALK_MIN_MIN}–{WALK_MIN} min from your spot · a few options to choose</span>
-                </span>
-                <span style={{ fontSize: 16, lineHeight: 1 }}>→</span>
-              </button>
-            )}
 
             {/* BACK control while choosing an option or viewing a drawn route */}
             {(kind === 'walk-options' || kind === 'route') && (
@@ -1731,15 +2148,10 @@ function RealMapScreen() {
               </button>
             )}
 
-            {/* VIBE view: no street list — the matched streets live on the map as
-                the heat cloud, and tapping one opens its popup. We keep the header
-                count + the "Make a walk" button above, and swap the list for a hint. */}
-            {kind === 'vibe' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px 2px',
-                fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
-                <span style={{ fontSize: 15, lineHeight: 1 }}>👆</span>
-                <span>Tap a highlighted street on the map to see its name and details.</span>
-              </div>
+            {/* ROUTE view: the drawn walk as a départ→…→arrivée sequence with an
+                anticipation card (photo + LLM sentence) and per-leg vibe/link steps. */}
+            {kind === 'route' ? (
+              <RouteSequence stats={routeStats} seq={routeSeq} onPan={panToCoord} />
             ) : kind === 'walk-options'
               ? walkOptions.map((o, i) => (
                   <button key={'opt' + i} onClick={() => chooseWalk(o, i)}

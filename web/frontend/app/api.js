@@ -136,10 +136,53 @@
       .catch(function (e) { console.warn('[StudyAPI] refreshFriends failed', e); return friendsCache; });
   }
 
+  // Repeated-search nudge: a friend hitting the same category twice should pop a
+  // toast on MY screen. We poll /friends/activity, remember the highest count we
+  // have already shown per (friend, query), and only fire 'seoulwalk:friendsearch'
+  // for buckets whose count has grown since. The FIRST poll after launch only
+  // "primes" this memory (records counts, shows nothing) so stale history from
+  // before the app opened never bursts a wall of toasts.
+  var ACTIVITY_SEEN_KEY = 'seoulwalk.friends.activity.seen';
+  var activityPrimed = false;
+  function loadActivitySeen() {
+    try { return JSON.parse(localStorage.getItem(ACTIVITY_SEEN_KEY) || '{}'); } catch (e) { return {}; }
+  }
+  function saveActivitySeen(m) {
+    try { localStorage.setItem(ACTIVITY_SEEN_KEY, JSON.stringify(m)); } catch (e) {}
+  }
+  function refreshFriendActivity() {
+    if (!sid()) return Promise.resolve([]);
+    return fetch(BASE_URL + '/sessions/' + sid() + '/friends/activity', { headers: headers() })
+      .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
+      .then(function (r) {
+        var rows = (r && r.activity) || [];
+        var seen = loadActivitySeen();
+        var fresh = [];
+        rows.forEach(function (row) {
+          var key = row.participant_id + '|' + row.query;
+          var prev = seen[key] || 0;
+          // Prime silently on the first poll; afterwards only newly-grown counts pop.
+          if (activityPrimed && row.count > prev) fresh.push(row);
+          if (row.count > prev) seen[key] = row.count;
+        });
+        saveActivitySeen(seen);
+        activityPrimed = true;
+        if (fresh.length) {
+          try { window.dispatchEvent(new CustomEvent('seoulwalk:friendsearch', { detail: { searches: fresh } })); } catch (e) {}
+        }
+        return rows;
+      })
+      .catch(function (e) { console.warn('[StudyAPI] refreshFriendActivity failed', e); return []; });
+  }
+
   function startFriendPolling(ms) {
     stopFriendPolling();
     refreshFriends();                                  // immediate first sync
-    friendPollTimer = setInterval(refreshFriends, ms || 10000);
+    refreshFriendActivity();                           // prime the repeated-search memory
+    friendPollTimer = setInterval(function () {
+      refreshFriends();
+      refreshFriendActivity();
+    }, ms || 10000);
   }
   function stopFriendPolling() {
     if (friendPollTimer) { clearInterval(friendPollTimer); friendPollTimer = null; }
@@ -214,7 +257,8 @@
     hasSession: hasSession, currentCode: currentCode,
     currentDisplayName: currentDisplayName, renameDisplayName: renameDisplayName,
     myFriendCode: myFriendCode, addFriend: addFriend, myFriends: myFriends,
-    refreshFriends: refreshFriends, startFriendPolling: startFriendPolling, stopFriendPolling: stopFriendPolling,
+    refreshFriends: refreshFriends, refreshFriendActivity: refreshFriendActivity,
+    startFriendPolling: startFriendPolling, stopFriendPolling: stopFriendPolling,
     logOnboarding: logOnboarding, logProfile: logProfile, logSearch: logSearch,
     logRoute: logRoute, logRouteChoice: logRouteChoice, logEvent: logEvent,
     logSlider: logSlider, logGps: logGps, flushGps: flushGps,
