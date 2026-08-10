@@ -337,6 +337,45 @@ function buildAxisNormalizers(feats, axes) {
   };
 }
 
+// Human-readable pole labels per scored axis, [negPole, posPole]. Mirrors
+// theme.jsx SWIPE_AXES, but keyed by the actual street property names (the
+// greenery score lives on `park_v2`). A null pole means that direction isn't a
+// describable trait (e.g. "less green"), so only its meaningful pole surfaces.
+const TRAIT_POLES = {
+  touristy_local:        ['touristy', 'local'],
+  historic_contemporary: ['historic', 'contemporary'],
+  raw_polished:          ['raw', 'polished'],
+  quiet_lively:          ['quiet', 'lively'],
+  local_chain:           ['independent', 'chain'],
+  park_v2:               [null, 'leafy'],
+};
+
+// Describe a street by its OWN most pronounced characteristics — independent of
+// the user's current vibe target. We percentile-normalise each axis across all
+// streets (same currency as the sliders), then surface the 1–2 poles this
+// street leans on hardest. Returns fn(feature) → e.g. "historic · quiet", or ''
+// when the street is too middling on every axis to have a standout trait.
+function describeTraits(feats, opts) {
+  const axes = Object.keys(TRAIT_POLES);
+  const norm = buildAxisNormalizers(feats, axes);
+  const minLean = (opts && opts.minLean) != null ? opts.minLean : 0.5;  // top/bottom ~25%
+  const maxN = (opts && opts.maxN) || 2;
+  return (feature) => {
+    const p = feature && feature.properties;
+    if (!p) return '';
+    const leans = [];
+    axes.forEach(ax => {
+      const n = norm(ax, p[ax]);
+      if (n == null) return;                                 // no reading on this axis
+      const pole = n < 0 ? TRAIT_POLES[ax][0] : TRAIT_POLES[ax][1];
+      if (!pole || Math.abs(n) < minLean) return;            // undescribable or too middling
+      leans.push({ label: pole, mag: Math.abs(n) });
+    });
+    leans.sort((a, b) => b.mag - a.mag);
+    return leans.slice(0, maxN).map(l => l.label).join(' · ');
+  };
+}
+
 // Core ranker — score named streets by ALIGNMENT with a weighted vibe vector.
 // `target` maps axis names → a weight in [-1,+1]: the slider position encodes
 // BOTH a direction (which pole) AND an intensity (how much it matters). Centre = 0
@@ -356,6 +395,7 @@ function rankByVibe(target, feats) {
   const axes = Object.keys(target);
   if (!axes.length) return [];
   const norm = buildAxisNormalizers(feats, axes);
+  const trait = describeTraits(feats);       // the street's own standout character, for favorites
   const wsum = axes.reduce((s, ax) => s + Math.abs(target[ax]), 0);  // max achievable utility
   const out = [];
   feats.forEach(f => {
@@ -369,6 +409,7 @@ function rankByVibe(target, feats) {
     if (covered === 0) return;               // we know nothing about this street on the active axes
     const score = wsum > 0 ? (util / wsum + 1) / 2 : 0.5;   // → [0,1] match
     out.push({ name: f.properties.name, score, feature: f, covered, nAxes: axes.length,
+      traits: trait(f),                      // e.g. "historic · quiet" — shown on the saved card
       sub: `${Math.round(score * 100)}% match · noted on ${covered}/${axes.length} ${axes.length > 1 ? 'axes' : 'axis'}` });
   });
   // rank on alignment ONLY — coverage is shown, not used to sort.
@@ -1350,6 +1391,10 @@ function RealMapScreen() {
   const endMarkerRef = React.useRef(null); // ◆ route-end marker (open walk finishes elsewhere)
   const anchorMarkersRef = React.useRef([]);// landmark anchor pins dropped along a drawn route
   const panPopupRef = React.useRef(null);  // the single street label shown when a leg is tapped
+  const resultPopupRef = React.useRef(null);// the single result card popup (list/map tap) — replaced, never stacked
+  const geomIdxRef = React.useRef({});     // normalised street name → GeoJSON geometry (for friend-fav badges)
+  const friendFavsRef = React.useRef({});  // normalised street name → [friend display names] who shared it
+  const friendFavMarkersRef = React.useRef([]);// ♥ markers dropped on friend-favorited streets
 
   const [status, setStatus] = React.useState('Loading the neighbourhood…');
   const [tab, setTab] = React.useState('search');     // bottom nav: 'search' | 'locals'
@@ -1381,10 +1426,22 @@ function RealMapScreen() {
     return {
       name: r.name,
       sub: r.sub || '',
+      traits: r.traits || '',                // the street's standout character (vibe results only)
       points: geomToThumb(r.feature && r.feature.geometry),
       kind: r.type === 'nature' ? 'nature' : 'street',
     };
   }
+
+  // ---- friends' shared favorites → ♥ badges on the map ----
+  // Seed from whatever the study client already cached, then stay live with the
+  // friend poll's 'seoulwalk:friendfavorites' broadcasts.
+  React.useEffect(() => {
+    const S = window.StudyAPI;
+    if (S && S.myFriendFavorites) applyFriendFavs(S.myFriendFavorites());
+    const onFF = e => applyFriendFavs((e.detail && e.detail.favorites) || []);
+    window.addEventListener('seoulwalk:friendfavorites', onFF);
+    return () => window.removeEventListener('seoulwalk:friendfavorites', onFF);
+  }, []);
 
   // ---- init the map once, on mount ----
   React.useEffect(() => {
@@ -1536,7 +1593,14 @@ function RealMapScreen() {
           if (cats.length) cidx[k] = cats;
         });
         commerceIdxRef.current = cidx;
+        // Name → geometry, so a friend's shared street (known only by name) can be
+        // located on the map to drop a ♥ badge. First geometry per name wins.
+        scFeats.current.forEach(f => {
+          const k = normName(f.properties.name);
+          if (k && f.geometry && !geomIdxRef.current[k]) geomIdxRef.current[k] = f.geometry;
+        });
         map.getSource('streets-base').setData(gj);
+        renderFriendFavMarkers();   // any cached friend shares now have geometry to pin
         setStatus('');
       }).catch(() => setStatus('⚠️ street-character-jongno.geojson not found.'));
 
@@ -1548,6 +1612,12 @@ function RealMapScreen() {
       fetch('nature-paths-jongno.geojson').then(r => r.json()).then(gj => {
         if (cancelled) return;
         natureFeats.current = gj.features || [];
+        natureFeats.current.forEach(f => {
+          const nm = f.properties && f.properties.name;
+          const k = normName(nm);
+          if (k && f.geometry && !geomIdxRef.current[k]) geomIdxRef.current[k] = f.geometry;
+        });
+        renderFriendFavMarkers();
       }).catch(() => { /* nature category just stays empty */ });
 
       // administrative dong (행정동) — powers "zoom to a neighbourhood the user names".
@@ -1612,6 +1682,62 @@ function RealMapScreen() {
     clearNatureBubbles();
     clearRouteMarkers();
   }
+  // Friend-favorite ♥ badges: a small heart pinned at the midpoint of every street a
+  // friend has shared, so shared spots are discoverable on the map (not only when you
+  // happen to tap the exact street). DOM markers, rebuilt whenever the shared list or
+  // the geometry index changes. Tapping a badge opens a "Liked by X" label.
+  function renderFriendFavMarkers() {
+    const map = mapRef.current;
+    if (!map) return;
+    friendFavMarkersRef.current.forEach(m => m.remove());
+    friendFavMarkersRef.current = [];
+    const favs = friendFavsRef.current || {};
+    Object.keys(favs).forEach(key => {
+      const geom = geomIdxRef.current[key];
+      if (!geom) return;                        // street not in the loaded Jongno data
+      const pts = coordsOf(geom);
+      if (!pts.length) return;
+      const mid = pts[Math.floor(pts.length / 2)];
+      const who = favs[key] || [];
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.setAttribute('aria-label', 'Liked by ' + who.join(', '));
+      el.style.cssText = 'width:26px;height:26px;border-radius:999px;border:2px solid #fff;cursor:pointer;' +
+        'background:' + MAP_PAL.accent + ';display:flex;align-items:center;justify-content:center;' +
+        'box-shadow:0 2px 8px rgba(20,20,25,.28);padding:0;';
+      el.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#fff" stroke="#fff" stroke-width="1.6"><path d="M12 21s-7.5-4.6-9.6-9A5.4 5.4 0 0 1 12 5.5 5.4 5.4 0 0 1 21.6 12C19.5 16.4 12 21 12 21z"/></svg>';
+      el.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const label = who.length ? 'Liked by ' + who.join(', ') : 'Liked by a friend';
+        new maplibregl.Popup({ offset: 16, closeButton: false, closeOnClick: true, maxWidth: '220px' })
+          .setLngLat(mid)
+          .setHTML(`<b style="font-family:${t.fontUI};font-size:13px;color:${MAP_PAL.ink}">${friendFavDisplayName(key)}</b>` +
+                   `<div style="font-family:${t.fontUI};font-size:11.5px;color:${MAP_PAL.accent};font-weight:700;margin-top:3px">❤ ${label}</div>`)
+          .addTo(map);
+      });
+      friendFavMarkersRef.current.push(new maplibregl.Marker({ element: el }).setLngLat(mid).addTo(map));
+    });
+  }
+  // Best human-readable street name for a normalised key (fall back to the key).
+  function friendFavDisplayName(key) {
+    const hit = scFeats.current.find(f => normName(f.properties.name) === key)
+      || natureFeats.current.find(f => f.properties && normName(f.properties.name) === key);
+    return (hit && hit.properties && hit.properties.name) || key;
+  }
+  // Collapse the flat friend-shares list into { normName → [friend names] } and repaint.
+  function applyFriendFavs(list) {
+    const idx = {};
+    (list || []).forEach(fv => {
+      const k = normName(fv.street_name);
+      if (!k) return;
+      const who = fv.display_name || 'a friend';
+      const arr = idx[k] || (idx[k] = []);
+      if (arr.indexOf(who) < 0) arr.push(who);
+    });
+    friendFavsRef.current = idx;
+    renderFriendFavMarkers();
+  }
+
   // Green name bubbles over each park walk (the "Park" greenery mode). DOM markers,
   // so they live outside React and must be added/removed explicitly.
   function clearNatureBubbles() { natureMarkersRef.current.forEach(m => m.remove()); natureMarkersRef.current = []; }
@@ -1620,6 +1746,7 @@ function RealMapScreen() {
   function clearRouteMarkers() {
     if (endMarkerRef.current) { endMarkerRef.current.remove(); endMarkerRef.current = null; }
     if (panPopupRef.current) { panPopupRef.current.remove(); panPopupRef.current = null; }
+    if (resultPopupRef.current) { resultPopupRef.current.remove(); resultPopupRef.current = null; }
     anchorMarkersRef.current.forEach(m => m.remove()); anchorMarkersRef.current = [];
   }
   function setNatureBubbles(list) {
@@ -1965,6 +2092,15 @@ function RealMapScreen() {
     title.style.cssText = `font-weight:700;font-size:13.5px;color:${MAP_PAL.ink};`;
     el.appendChild(title);
 
+    // "Liked by …" — if any friend has shared this street, surface who, right up top.
+    const likedBy = friendFavsRef.current[normName(r.name)];
+    if (likedBy && likedBy.length) {
+      const liked = document.createElement('div');
+      liked.textContent = '❤ Liked by ' + likedBy.join(', ');
+      liked.style.cssText = `font-size:11.5px;font-weight:700;color:${MAP_PAL.accent};margin-top:4px;`;
+      el.appendChild(liked);
+    }
+
     // Ambiance sentence — the human "character" line (EN hero, KO companion).
     const amb = lookupByNames(r.name, localsIdxRef.current);
     if (amb && (amb.en || amb.ko)) {
@@ -2020,30 +2156,46 @@ function RealMapScreen() {
     kebab.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="${MAP_PAL.inkSoft}"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>`;
     kebab.style.cssText = 'border:none;background:transparent;cursor:pointer;padding:3px;border-radius:8px;display:flex;align-items:center;';
 
-    const menu = document.createElement('button');
-    menu.type = 'button';
-    menu.style.cssText = `display:none;position:absolute;bottom:calc(100% + 4px);right:0;white-space:nowrap;align-items:center;gap:7px;border:1px solid ${MAP_PAL.card2};background:#fff;border-radius:10px;padding:8px 11px;box-shadow:0 8px 22px rgba(20,20,25,.16);cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;color:${MAP_PAL.ink};`;
+    // Two-row menu: save/remove the favorite, and share/un-share it with friends.
+    const menu = document.createElement('div');
+    menu.style.cssText = `display:none;position:absolute;bottom:calc(100% + 4px);right:0;flex-direction:column;align-items:stretch;gap:2px;border:1px solid ${MAP_PAL.card2};background:#fff;border-radius:10px;padding:6px;box-shadow:0 8px 22px rgba(20,20,25,.16);font-family:inherit;`;
+    const rowCss = `display:flex;align-items:center;gap:8px;white-space:nowrap;border:none;background:transparent;border-radius:7px;padding:7px 9px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;color:${MAP_PAL.ink};text-align:left;`;
+    const favBtn = document.createElement('button'); favBtn.type = 'button'; favBtn.style.cssText = rowCss;
+    const shareBtn = document.createElement('button'); shareBtn.type = 'button'; shareBtn.style.cssText = rowCss;
+    const heartSvg = on => `<svg width="14" height="14" viewBox="0 0 24 24" fill="${on ? MAP_PAL.accent : 'none'}" stroke="${MAP_PAL.accent}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-9.6-9A5.4 5.4 0 0 1 12 5.5 5.4 5.4 0 0 1 21.6 12C19.5 16.4 12 21 12 21z"/></svg>`;
+    const shareSvg = on => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${on ? MAP_PAL.accent : MAP_PAL.inkSoft}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/></svg>`;
     const paint = () => {
       const fav = isFavorite(r.name);
-      menu.innerHTML =
-        `<svg width="14" height="14" viewBox="0 0 24 24" fill="${fav ? MAP_PAL.accent : 'none'}" stroke="${MAP_PAL.accent}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-9.6-9A5.4 5.4 0 0 1 12 5.5 5.4 5.4 0 0 1 21.6 12C19.5 16.4 12 21 12 21z"/></svg>` +
-        `<span>${fav ? 'Remove from favorites' : 'Add path to favorites'}</span>`;
+      const shared = isFavoriteShared(r.name);
+      favBtn.innerHTML = heartSvg(fav) + `<span>${fav ? 'Remove from favorites' : 'Add path to favorites'}</span>`;
+      shareBtn.innerHTML = shareSvg(shared) + `<span>${shared ? 'Shared with friends' : 'Share with friends'}</span>`;
+      shareBtn.style.color = shared ? MAP_PAL.accent : MAP_PAL.ink;
     };
     paint();
 
     // hover reveals the menu; a short close delay bridges the gap dots → menu
     let hideTimer = null;
-    const show = () => { clearTimeout(hideTimer); menu.style.display = 'inline-flex'; kebab.style.background = MAP_PAL.card2; };
+    const show = () => { clearTimeout(hideTimer); menu.style.display = 'flex'; kebab.style.background = MAP_PAL.card2; };
     const scheduleHide = () => { hideTimer = setTimeout(() => { menu.style.display = 'none'; kebab.style.background = 'transparent'; }, 180); };
     kebab.addEventListener('mouseenter', show);
     kebab.addEventListener('mouseleave', scheduleHide);
     menu.addEventListener('mouseenter', show);
     menu.addEventListener('mouseleave', scheduleHide);
-    // touch fallback: tap the dots to open, tap the item to save/remove
-    kebab.addEventListener('click', e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'inline-flex' : 'none'; });
-    menu.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(favFromResult(r)); paint();
+    // touch fallback: tap the dots to open, tap a row to act
+    kebab.addEventListener('click', e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'flex' : 'none'; });
+    favBtn.addEventListener('click', e => { e.stopPropagation(); toggleFavorite(favFromResult(r)); paint();
       if (window.StudyAPI) window.StudyAPI.logEvent('favorite_toggle', { name: r.name, kind: r.type }); });
+    // Sharing implies saving: if the street isn't a favorite yet, add it first so the
+    // shared flag has something to attach to; un-sharing leaves the favorite in place.
+    shareBtn.addEventListener('click', e => { e.stopPropagation();
+      const nowShared = !isFavoriteShared(r.name);
+      if (nowShared && !isFavorite(r.name)) toggleFavorite(favFromResult(r));
+      setFavoriteShared(r.name, nowShared);
+      paint();
+    });
 
+    menu.appendChild(favBtn);
+    menu.appendChild(shareBtn);
     bar.appendChild(menu);
     bar.appendChild(kebab);
     el.appendChild(bar);
@@ -2057,8 +2209,16 @@ function RealMapScreen() {
     const map = mapRef.current;
     const pts = coordsOf(r.feature.geometry);
     const mid = pts[Math.floor(pts.length / 2)];
-    if (map && mid) new maplibregl.Popup({ offset: 10, maxWidth: '260px' }).setLngLat(mid)
-      .setDOMContent(buildPopupNode(r)).addTo(map);
+    // Keep only ONE result popup: drop the previous card before opening the new one
+    // (mirrors panPopupRef) so taps never pile popups up. closeOnClick lets a tap on
+    // the map dismiss it; we also clear the ref on 'close' so it can't leak.
+    if (resultPopupRef.current) { resultPopupRef.current.remove(); resultPopupRef.current = null; }
+    if (map && mid) {
+      const popup = new maplibregl.Popup({ offset: 10, maxWidth: '260px', closeOnClick: true })
+        .setLngLat(mid).setDOMContent(buildPopupNode(r)).addTo(map);
+      popup.on('close', () => { if (resultPopupRef.current === popup) resultPopupRef.current = null; });
+      resultPopupRef.current = popup;
+    }
   }
 
   const ease = 'cubic-bezier(.22,1,.36,1)';

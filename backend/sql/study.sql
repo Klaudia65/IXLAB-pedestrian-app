@@ -212,6 +212,11 @@ CREATE TABLE IF NOT EXISTS shared_favorite (
 );
 CREATE INDEX IF NOT EXISTS idx_shared_favorite_group ON shared_favorite (group_id);
 CREATE INDEX IF NOT EXISTS idx_shared_favorite_session ON shared_favorite (session_id);
+-- One shared row per (participant, street): sharing the same street twice updates
+-- the existing row (upsert) instead of duplicating, and un-sharing deletes it. This
+-- makes the explicit share/un-share toggle idempotent.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_shared_favorite_participant_street
+    ON shared_favorite (participant_id, street_name);
 
 -- CATCH-ALL ------------------------------------------------------------------
 

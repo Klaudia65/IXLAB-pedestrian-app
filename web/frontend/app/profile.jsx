@@ -73,7 +73,7 @@ function PrefChip({ label, on, accent, onClick }) {
 // ---- favorite-path mini map card ----
 // Draws a saved street's REAL geometry (fav.points, normalised 0..100 by
 // geomToThumb at save time) as a small thumbnail, with a remove toggle.
-function PathCard({ fav, accent, onRemove }) {
+function PathCard({ fav, accent, onRemove, onToggleShare }) {
   const t = React.useContext(ThemeCtx);
   const pts = fav.points || [];
   const start = pts[0];
@@ -81,6 +81,7 @@ function PathCard({ fav, accent, onRemove }) {
   const line = pts.map(pt => pt.join(',')).join(' ');
   const isNature = fav.kind === 'nature';
   const stroke = isNature ? 'var(--good)' : accent;
+  const shared = !!fav.shared;
   return (
     <div style={{ flex: 'none', width: 212, borderRadius: 18, background: 'var(--card)',
       border: '1px solid var(--line)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
@@ -116,12 +117,27 @@ function PathCard({ fav, accent, onRemove }) {
           </svg>
         </button>
       </div>
-      {/* footer: the street's descriptor */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px 14px' }}>
-        <span style={{ flex: 1, minWidth: 0, fontFamily: t.fontMono, fontSize: 10.5, letterSpacing: '0.06em',
+      {/* footer: the street's descriptor + a share-with-friends toggle */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px 14px' }}>
+        <span style={{ minWidth: 0, fontFamily: t.fontMono, fontSize: 10.5, letterSpacing: '0.06em',
           color: 'var(--ink-soft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {fav.sub || (isNature ? 'nature walk' : 'saved street')}
+          {/* prefer the street's standout character over the raw match/coverage line */}
+          {fav.traits || fav.sub || (isNature ? 'nature walk' : 'saved street')}
         </span>
+        {/* explicit share: private until the walker pushes it to friends */}
+        <button onClick={onToggleShare} title={shared ? 'Stop sharing with friends' : 'Share with friends'}
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            border: shared ? 'none' : '1px solid var(--line-strong)',
+            background: shared ? accent : 'transparent',
+            color: shared ? '#FFFFFF' : 'var(--ink-soft)',
+            borderRadius: 999, padding: '7px 12px', cursor: 'pointer', fontFamily: t.fontUI,
+            fontSize: 12, fontWeight: 700, transition: 'background .2s ease, color .2s ease' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+            <line x1="8.6" y1="10.5" x2="15.4" y2="6.5" /><line x1="8.6" y1="13.5" x2="15.4" y2="17.5" />
+          </svg>
+          {shared ? 'Shared with friends' : 'Share with friends'}
+        </button>
       </div>
     </div>
   );
@@ -193,8 +209,10 @@ function ProfileScreen({ go }) {
   const detectedPrefs = React.useMemo(() => readSwipeChips() || PROFILE_PREFS, []);
   const [prefs, setPrefs] = usePersist('profile.prefs', {});
   const favorites = useFavorites();               // saved streets from the detailed map
+  const friendFavs = useFriendFavorites();        // streets my friends have shared with me
   const pathsScroll = useDragScroll();
   const friendsScroll = useDragScroll();
+  const friendFavsScroll = useDragScroll();
 
   // Real friends from the cloud (each with their taste vector, for the later merge).
   // `joining` (persisted) tracks which of them come on THIS walk; a newly added
@@ -230,6 +248,22 @@ function ProfileScreen({ go }) {
     if (!myCode) return;
     try { navigator.clipboard.writeText(myCode); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) {}
   }
+
+  // Streets my friends have shared, collapsed to one card per street with the list
+  // of friends who liked it (a street two friends both share reads "Liked by A, B").
+  const friendFavGroups = React.useMemo(() => {
+    const by = new Map();
+    (friendFavs || []).forEach(fv => {
+      const name = fv.street_name;
+      if (!name) return;
+      const who = fv.display_name || 'a friend';
+      const g = by.get(name) || { name, who: [], ts: fv.ts };
+      if (g.who.indexOf(who) < 0) g.who.push(who);
+      if (fv.ts > g.ts) g.ts = fv.ts;
+      by.set(name, g);
+    });
+    return Array.from(by.values()).sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  }, [friendFavs]);
 
   // Group taste for explainability: blend my vector with the joining friends'
   // (missing axes skipped, never a reject) and surface the strongest shared leans
@@ -392,11 +426,44 @@ function ProfileScreen({ go }) {
               onClickCapture={pathsScroll.onClickCapture} onWheel={pathsScroll.onWheel}
               style={{ display: 'flex', gap: 14, overflowX: 'auto', padding: '4px 20px 6px', ...pathsScroll.style }}>
               {favorites.map(f => (
-                <PathCard key={f.name} fav={f} accent={accent} onRemove={() => toggleFavorite(f)} />
+                <PathCard key={f.name} fav={f} accent={accent} onRemove={() => toggleFavorite(f)}
+                  onToggleShare={() => setFavoriteShared(f.name, !f.shared)} />
               ))}
             </div>
           )}
         </section>
+
+        {/* favorites shared BY friends — grouped by street, tagged with who liked it */}
+        {friendFavGroups.length > 0 && (
+          <section style={{ padding: '26px 0 0' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '0 20px', marginBottom: 14 }}>
+              <h2 style={{ margin: 0, fontFamily: t.fontHead, fontSize: 20, fontWeight: 500, color: 'var(--ink)' }}>From friends</h2>
+              <Label style={{ color: 'var(--ink-faint)' }}>{friendFavGroups.length} shared</Label>
+            </div>
+            <div ref={friendFavsScroll.ref} onPointerDown={friendFavsScroll.onPointerDown} onPointerMove={friendFavsScroll.onPointerMove}
+              onPointerUp={friendFavsScroll.onPointerUp} onPointerCancel={friendFavsScroll.onPointerCancel}
+              onClickCapture={friendFavsScroll.onClickCapture} onWheel={friendFavsScroll.onWheel}
+              style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '0 20px 4px' }}>
+              {friendFavGroups.map(g => (
+                <button key={g.name} onClick={() => go('map2')} title="See it on the map"
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', width: '100%',
+                    padding: '12px 14px', borderRadius: 16, background: 'var(--card)', border: '1px solid var(--line)',
+                    boxShadow: 'var(--shadow)', cursor: 'pointer', fontFamily: t.fontUI }}>
+                  <span style={{ width: 34, height: 34, flex: '0 0 auto', borderRadius: 999, background: 'var(--accent-soft)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7.5-4.6-9.6-9A5.4 5.4 0 0 1 12 5.5 5.4 5.4 0 0 1 21.6 12C19.5 16.4 12 21 12 21z" /></svg>
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</span>
+                    <span style={{ display: 'block', fontSize: 12, color: 'var(--ink-soft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      Liked by {g.who.join(', ')}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* friends */}
         <section style={{ padding: '26px 0 0' }}>

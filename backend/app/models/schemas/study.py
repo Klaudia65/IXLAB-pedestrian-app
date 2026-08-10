@@ -128,6 +128,20 @@ class FavoriteIn(BaseModel):
     note: str | None = None
 
 
+class FriendFavoriteOut(BaseModel):
+    """A street a FRIEND has shared as a favourite (surfaced on my map + profile)."""
+    participant_id: int               # who shared it
+    display_name: str | None = None   # their label, for the "liked by X" tag
+    street_name: str | None = None
+    edge_id: str | None = None
+    note: str | None = None
+    ts: datetime
+
+
+class FriendFavoritesOut(BaseModel):
+    favorites: list[FriendFavoriteOut] = []
+
+
 # --- generic events ---------------------------------------------------------
 
 class AppEventIn(BaseModel):

@@ -482,13 +482,44 @@ function writeFavorites(list) {
   try { window.dispatchEvent(new CustomEvent(FAV_EVENT)); } catch (e) {}
 }
 function isFavorite(name) { return getFavorites().some(f => f.name === name); }
+// Is this favorite currently shared with friends?
+function isFavoriteShared(name) { return getFavorites().some(f => f.name === name && f.shared); }
 // Add (newest first) or remove a favorite, keyed by name. Returns true if now saved.
+// Removing a street that was shared also un-shares it, so it disappears from
+// friends' maps instead of lingering after the owner drops it.
 function toggleFavorite(fav) {
   const list = getFavorites();
   const i = list.findIndex(f => f.name === fav.name);
-  if (i >= 0) list.splice(i, 1); else list.unshift(fav);
+  if (i >= 0) {
+    const removed = list[i];
+    list.splice(i, 1);
+    if (removed && removed.shared && window.StudyAPI && window.StudyAPI.unshareFavorite) {
+      window.StudyAPI.unshareFavorite(removed.name);
+    }
+  } else {
+    list.unshift(fav);
+  }
   writeFavorites(list);
   return i < 0;
+}
+// Flip whether a saved street is shared with friends. Explicit action (separate
+// from saving): the ♥ stays private until the walker chooses to push it out. Keeps
+// the local `shared` flag and the cloud in sync. Returns the new shared state.
+function setFavoriteShared(name, shared) {
+  const list = getFavorites();
+  const f = list.find(x => x.name === name);
+  if (!f) return false;
+  f.shared = !!shared;
+  writeFavorites(list);
+  const S = window.StudyAPI;
+  if (S) {
+    if (shared && S.shareFavorite) S.shareFavorite(f);
+    else if (!shared && S.unshareFavorite) S.unshareFavorite(name);
+    if (S.logEvent) S.logEvent('favorite_share', { name: name, shared: !!shared });
+    // pull a fresh view so any UI listening to friends' shares stays current
+    if (S.refreshFriendFavorites) setTimeout(() => S.refreshFriendFavorites(), 300);
+  }
+  return !!shared;
 }
 // Live-synced favorites list for a component.
 function useFavorites() {
@@ -498,6 +529,18 @@ function useFavorites() {
     window.addEventListener(FAV_EVENT, sync);
     window.addEventListener('storage', sync);   // sync across tabs too
     return () => { window.removeEventListener(FAV_EVENT, sync); window.removeEventListener('storage', sync); };
+  }, []);
+  return list;
+}
+// Live-synced list of streets my FRIENDS have shared (from the friend poll).
+// Each item: { participant_id, display_name, street_name, edge_id, note, ts }.
+function useFriendFavorites() {
+  const read = () => (window.StudyAPI && window.StudyAPI.myFriendFavorites && window.StudyAPI.myFriendFavorites()) || [];
+  const [list, setList] = React.useState(read);
+  React.useEffect(() => {
+    const sync = e => setList((e && e.detail && e.detail.favorites) || read());
+    window.addEventListener('seoulwalk:friendfavorites', sync);
+    return () => window.removeEventListener('seoulwalk:friendfavorites', sync);
   }, []);
   return list;
 }
@@ -511,5 +554,6 @@ Object.assign(window, {
   cardById, readPairOverride, resolveSwipePairs,
   MAP_ZONE, MAP_SPOTS, HIDDEN_PATH, FAMOUS_PATH, RECO_PATH, MAP_MODES, PEOPLE, SOCIAL,
   usePersist, prefersReduced, useMediaQuery, clamp, lerp,
-  geomToThumb, getFavorites, isFavorite, toggleFavorite, useFavorites,
+  geomToThumb, getFavorites, isFavorite, isFavoriteShared, toggleFavorite,
+  setFavoriteShared, useFavorites, useFriendFavorites,
 });

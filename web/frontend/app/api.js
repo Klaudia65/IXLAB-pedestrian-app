@@ -175,13 +175,64 @@
       .catch(function (e) { console.warn('[StudyAPI] refreshFriendActivity failed', e); return []; });
   }
 
+  // --- shared favorites (streets shared with / by friends) ------------------
+  // A participant explicitly shares a favourited street; their friends then see it
+  // on their own map + profile. Mirrors the friends cache: the last-known list is
+  // persisted so it's available immediately after a reload, and a poll refresh
+  // fires 'seoulwalk:friendfavorites' with the fresh list for any mounted screen.
+  var FRIEND_FAVS_KEY = 'seoulwalk.friends.favorites';
+  var friendFavsCache = (function () {
+    try { return JSON.parse(localStorage.getItem(FRIEND_FAVS_KEY) || '[]'); } catch (e) { return []; }
+  })();
+  function myFriendFavorites() { return friendFavsCache.slice(); }
+  function emitFriendFavs(list) {
+    friendFavsCache = list || [];
+    try { localStorage.setItem(FRIEND_FAVS_KEY, JSON.stringify(friendFavsCache)); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('seoulwalk:friendfavorites', { detail: { favorites: friendFavsCache } })); } catch (e) {}
+  }
+
+  // Push a street I favourited out to my friends. Fire-and-forget.
+  function shareFavorite(fav) {
+    fav = fav || {};
+    return scoped('/favorites', {
+      street_name: fav.name || fav.street_name || null,
+      edge_id: fav.edge_id || null,
+      note: fav.note || fav.sub || null
+    });
+  }
+  // Stop sharing a street (DELETE carries the name in the body).
+  function unshareFavorite(name) {
+    if (!sid()) { console.warn('[StudyAPI] no session yet, dropping unshareFavorite'); return Promise.resolve(null); }
+    return fetch(BASE_URL + '/sessions/' + sid() + '/favorites', {
+      method: 'DELETE', headers: headers(), body: JSON.stringify({ street_name: name })
+    }).then(function (r) {
+      if (!r.ok) { console.warn('[StudyAPI] DELETE /favorites -> HTTP ' + r.status); return null; }
+      return r.json().catch(function () { return null; });
+    }).catch(function (e) { console.warn('[StudyAPI] unshareFavorite failed', e); return null; });
+  }
+
+  // GET the streets my friends have shared, cache + persist, and broadcast them.
+  function refreshFriendFavorites() {
+    if (!sid()) return Promise.resolve([]);
+    return fetch(BASE_URL + '/sessions/' + sid() + '/friends/favorites', { headers: headers() })
+      .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
+      .then(function (r) {
+        var list = (r && r.favorites) || [];
+        emitFriendFavs(list);
+        return list;
+      })
+      .catch(function (e) { console.warn('[StudyAPI] refreshFriendFavorites failed', e); return friendFavsCache; });
+  }
+
   function startFriendPolling(ms) {
     stopFriendPolling();
     refreshFriends();                                  // immediate first sync
     refreshFriendActivity();                           // prime the repeated-search memory
+    refreshFriendFavorites();                          // first sync of friends' shared streets
     friendPollTimer = setInterval(function () {
       refreshFriends();
       refreshFriendActivity();
+      refreshFriendFavorites();
     }, ms || 10000);
   }
   function stopFriendPolling() {
@@ -259,6 +310,8 @@
     myFriendCode: myFriendCode, addFriend: addFriend, myFriends: myFriends,
     refreshFriends: refreshFriends, refreshFriendActivity: refreshFriendActivity,
     startFriendPolling: startFriendPolling, stopFriendPolling: stopFriendPolling,
+    shareFavorite: shareFavorite, unshareFavorite: unshareFavorite,
+    refreshFriendFavorites: refreshFriendFavorites, myFriendFavorites: myFriendFavorites,
     logOnboarding: logOnboarding, logProfile: logProfile, logSearch: logSearch,
     logRoute: logRoute, logRouteChoice: logRouteChoice, logEvent: logEvent,
     logSlider: logSlider, logGps: logGps, flushGps: flushGps,

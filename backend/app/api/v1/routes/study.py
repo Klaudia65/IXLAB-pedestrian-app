@@ -25,6 +25,8 @@ from app.models.schemas.study import (
     CountOut,
     FavoriteIn,
     FriendActivityOut,
+    FriendFavoriteOut,
+    FriendFavoritesOut,
     FriendOut,
     FriendSearchOut,
     FriendsOut,
@@ -430,14 +432,62 @@ async def add_search(
 async def add_favorite(
     session_id: int, body: FavoriteIn, db: AsyncSession = Depends(get_db)
 ):
-    """Record a favourite street shared with the group."""
+    """Share a favourite street with my friends. Idempotent: re-sharing the same
+    street updates the existing row (edge_id/note/ts) rather than duplicating it —
+    the unique (participant_id, street_name) index drives the upsert."""
+    if not (body.street_name or "").strip():
+        raise HTTPException(status_code=422, detail="street_name is required to share")
     await db.execute(text("""
         INSERT INTO shared_favorite
             (session_id, participant_id, group_id, street_name, edge_id, note)
         SELECT :sid, s.participant_id, s.group_id, :name, :edge, :note
         FROM session s WHERE s.id = :sid
+        ON CONFLICT (participant_id, street_name) DO UPDATE
+          SET session_id = EXCLUDED.session_id,
+              group_id   = EXCLUDED.group_id,
+              edge_id    = EXCLUDED.edge_id,
+              note       = EXCLUDED.note,
+              ts         = NOW()
     """), {"sid": session_id, "name": body.street_name, "edge": body.edge_id, "note": body.note})
     return {"ok": True}
+
+
+@router.delete("/{session_id}/favorites")
+async def remove_favorite(
+    session_id: int, body: FavoriteIn, db: AsyncSession = Depends(get_db)
+):
+    """Un-share a favourite street. Removes the participant's shared row for that
+    street (no-op if it wasn't shared). Keyed by participant, so it works from any
+    session/device the same account is on."""
+    if not (body.street_name or "").strip():
+        raise HTTPException(status_code=422, detail="street_name is required to un-share")
+    await db.execute(text("""
+        DELETE FROM shared_favorite
+        WHERE street_name = :name
+          AND participant_id = (SELECT participant_id FROM session WHERE id = :sid)
+    """), {"sid": session_id, "name": body.street_name})
+    return {"ok": True}
+
+
+@router.get("/{session_id}/friends/favorites", response_model=FriendFavoritesOut)
+async def friends_favorites(session_id: int, db: AsyncSession = Depends(get_db)):
+    """Streets my FRIENDS have shared, newest first, each tagged with who shared it.
+
+    Sharing follows the friendship graph (mutual friend-code edges), NOT the study
+    group — so it works for any two connected participants. My own shares are
+    excluded; the client already knows those locally."""
+    pid = await _participant_of_session(db, session_id)
+    rows = (await db.execute(text("""
+        SELECT sf.participant_id, p.display_name,
+               sf.street_name, sf.edge_id, sf.note, sf.ts
+        FROM friendship f
+        JOIN participant p
+          ON p.id = CASE WHEN f.a_id = :pid THEN f.b_id ELSE f.a_id END
+        JOIN shared_favorite sf ON sf.participant_id = p.id
+        WHERE f.a_id = :pid OR f.b_id = :pid
+        ORDER BY sf.ts DESC
+    """), {"pid": pid})).mappings().all()
+    return FriendFavoritesOut(favorites=[FriendFavoriteOut(**row) for row in rows])
 
 
 # --- generic events ---------------------------------------------------------
