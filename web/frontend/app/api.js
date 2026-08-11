@@ -293,14 +293,43 @@
     }, 450);
   }
 
-  // GPS buffer — wired in a later phase (needs HTTPS for geolocation on a phone).
-  // Collect points and flush the batch to /gps; the capture loop is added then.
+  // GPS buffer. Points are appended by the App-level geolocation watch (app.jsx)
+  // and pushed in batches. Unlike every other logger here, a lost /gps batch is an
+  // unrecoverable HOLE in the walk trace — a dead spot in an alley, or the Render
+  // instance taking 30 s to wake, would silently erase minutes of the route. So a
+  // failed batch goes back to the head of the buffer and is retried on the next
+  // flush, capped so a long outage can't grow without bound (2000 points ≈ 2.5 h
+  // of walking at one point per 5 s).
   var gpsBuf = [];
-  function logGps(pt) { gpsBuf.push(pt); }
+  var GPS_BUF_MAX = 2000;
+  var gpsSending = false;   // never two flushes in flight — they'd reorder/duplicate
+  function trimGpsBuf() {
+    if (gpsBuf.length > GPS_BUF_MAX) gpsBuf.splice(0, gpsBuf.length - GPS_BUF_MAX);
+  }
+  function logGps(pt) { gpsBuf.push(pt); trimGpsBuf(); }
   function flushGps() {
-    if (!gpsBuf.length || !sid()) return Promise.resolve(null);
+    if (gpsSending || !gpsBuf.length || !sid()) return Promise.resolve(null);
     var batch = gpsBuf; gpsBuf = [];
-    return scoped('/gps', batch);
+    gpsSending = true;
+    // Deliberately NOT via post(): that helper flattens every failure to null, and
+    // here we must tell "delivered" from "failed" to decide whether to requeue.
+    return fetch(BASE_URL + '/sessions/' + sid() + '/gps', {
+      method: 'POST', headers: headers(), body: JSON.stringify(batch)
+    }).then(function (r) {
+      if (r.ok) return r.json().catch(function () { return null; });
+      // 4xx means the batch itself is wrong (validation): retrying it forever would
+      // block every later point behind it, so drop it loudly. 5xx is the server
+      // having a bad moment — worth retrying, so fall through to the catch.
+      if (r.status < 500) {
+        console.warn('[StudyAPI] /gps dropped ' + batch.length + ' points -> HTTP ' + r.status);
+        return null;
+      }
+      throw new Error('HTTP ' + r.status);
+    }).catch(function (e) {
+      console.warn('[StudyAPI] /gps failed, requeuing ' + batch.length + ' points', e);
+      gpsBuf = batch.concat(gpsBuf); trimGpsBuf();
+      return null;
+    }).then(function (res) { gpsSending = false; return res; });
   }
 
   window.StudyAPI = {

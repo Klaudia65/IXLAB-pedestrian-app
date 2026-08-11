@@ -429,10 +429,18 @@ window.rankByVibe = rankByVibe;
    (start pinned, end free), maximising the vibe met on the way.
    ============================================================ */
 
-// Fake "you are here". The app's data (graph + scores) only covers the Jongno
-// bbox, so a real device position outside it would have no network to route on —
-// we pin the start to a central Jongno node instead. ~인사동 / central 종로.
+// Fallback "you are here". The real device position drives the marker (see the
+// geolocation watch in RealMapScreen), but the app's data (graph + scores) only
+// covers the Jongno bbox: a fix outside it has no network to route on, so the walk
+// start falls back to this central Jongno node. ~인사동 / central 종로.
 const FAKE_GPS = [126.9908, 37.5758];
+// Is a device fix usable for routing? Only inside the pilot bbox — outside it
+// nearestNode() would happily snap to an arbitrary border node and every proposed
+// walk would depart from the wrong place.
+function inJongno(lng, lat) {
+  return lng >= JONGNO_BBOX[0] && lng <= JONGNO_BBOX[2]
+      && lat >= JONGNO_BBOX[1] && lat <= JONGNO_BBOX[3];
+}
 const WALK_MIN = 38;                 // the UPPER time budget
 const WALK_MIN_MIN = 25;             // walks may wrap up this early if good spots are close
 const WALK_SPEED_M_MIN = 80;         // ~4.8 km/h leisurely walking pace
@@ -1368,6 +1376,27 @@ function RouteSequence({ stats, seq, onPan }) {
   );
 }
 
+// Small pill telling whether the map is following a real GPS fix or resting on the
+// demo start. Visible on purpose: during the study you must be able to see at a
+// glance that the position (and therefore the recorded trace) is live, without
+// opening a console — a silent geolocation failure would cost a whole session.
+function GpsBadge({ status }) {
+  const L = {
+    pending: ['#8FA6A1', 'GPS…'],
+    live: [MAP_PAL.good, 'GPS live'],
+    outside: ['#E0A11B', 'Outside zone · demo'],
+    off: ['#C0392B', 'No GPS · demo'],
+  }[status];
+  if (!L) return null;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700,
+      color: 'var(--ink-soft)', background: 'var(--card)', borderRadius: 999, padding: '5px 10px',
+      boxShadow: 'var(--shadow)' }}>
+      <span style={{ width: 7, height: 7, borderRadius: 999, background: L[0], flex: '0 0 auto' }} />{L[1]}
+    </span>
+  );
+}
+
 /* ============================================================
    THE MAP SCREEN
    ============================================================ */
@@ -1382,7 +1411,13 @@ function RealMapScreen() {
   const netRef = React.useRef(null);     // routing graph (walk-net-jongno.json)
   const routeIdxRef = React.useRef(null);// precomputed normalised axes + adjacency
   const parkEdgesRef = React.useRef(null);// graph edges inside park walks (Park mode routing), memoised
-  const startNodeRef = React.useRef(null);// fake-GPS start, snapped to a graph node
+  const startNodeRef = React.useRef(null);// walk departure, snapped to a graph node
+  const puckRef = React.useRef(null);    // "you are here" marker (moves with each fix)
+  const puckPopupRef = React.useRef(null);// its popup — text depends on the GPS state
+  const gpsRef = React.useRef(null);     // last real fix {lng, lat, acc, ts}
+  const gpsStatusRef = React.useRef('pending'); // 'pending'|'live'|'outside'|'off'
+  const gpsCenteredRef = React.useRef(false);   // recentre only on the FIRST usable fix
+  const demoNoticeRef = React.useRef(false);    // "outside the zone" popup shown once
   const greenModeRef = React.useRef(readGreenMode()); // 'off' | 'leafy' | 'park'
   const natureMarkersRef = React.useRef([]);          // green name bubbles for park walks
   const localsIdxRef = React.useRef({});   // street name → LLM ambiance sentence {ko, en}
@@ -1397,6 +1432,10 @@ function RealMapScreen() {
   const friendFavMarkersRef = React.useRef([]);// ♥ markers dropped on friend-favorited streets
 
   const [status, setStatus] = React.useState('Loading the neighbourhood…');
+  // Mirror of gpsStatusRef, only so the badge can repaint. Kept as the ONLY piece of
+  // GPS state in React: the accuracy changes on every fix and lives in the marker
+  // popup (plain DOM) instead, so a 1 Hz GPS stream can't re-render this screen.
+  const [gpsStatus, setGpsStatus] = React.useState('pending');
   const [tab, setTab] = React.useState('search');     // bottom nav: 'search' | 'locals'
   const [query, setQuery] = React.useState('');
   const [kind, setKind] = React.useState(null);       // 'vibe' | 'function:<id>' | 'place'
@@ -1573,6 +1612,11 @@ function RealMapScreen() {
       map.on('mouseenter', 'green-cand-line', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'green-cand-line', () => { map.getCanvas().style.cursor = ''; });
 
+      // "You are here" puck — created here (not with the routing graph) so it shows
+      // up as soon as the map is ready and the geolocation watch has something to
+      // move, whether or not walk-net-jongno.json has landed yet.
+      makePuck(map);
+
       // ---- load the local data ----
       fetch('street-character-jongno.geojson').then(r => r.json()).then(gj => {
         if (cancelled) return;
@@ -1654,22 +1698,95 @@ function RealMapScreen() {
       } catch (e) { /* no photos → route falls back to the sentence only */ }
 
       // routing graph — powers the "38-min walk" orienteering path. Once loaded,
-      // snap the fake-GPS start to a node and drop a pulsing "you are here" puck.
+      // snap the walk's departure to a node (the GPS watch may already have a fix).
       fetch('walk-net-jongno.json').then(r => r.json()).then(net => {
         if (cancelled) return;
         netRef.current = net;
         routeIdxRef.current = buildRouteIndex(net);
-        startNodeRef.current = nearestNode(net, FAKE_GPS[0], FAKE_GPS[1]);
-        const el = document.createElement('div');
-        el.style.cssText = 'width:18px;height:18px;border-radius:50%;background:' + MAP_PAL.accent +
-          ';border:3px solid #fff;box-shadow:0 0 0 6px ' + MAP_PAL.accent + '33, 0 2px 6px rgba(0,0,0,.4);';
-        new maplibregl.Marker({ element: el }).setLngLat(net.nodes[startNodeRef.current])
-          .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML('<b>You are here</b><br>fixed start · Jongno')).addTo(map);
+        syncStartNode();
       }).catch(() => { /* routing just stays unavailable */ });
     });
 
-    return () => { cancelled = true; map.remove(); mapRef.current = null; };
+    return () => {
+      cancelled = true; map.remove(); mapRef.current = null;
+      puckRef.current = null; puckPopupRef.current = null;   // destroyed with the map
+    };
   }, []);
+
+  /* ---- real GPS -----------------------------------------------------------
+     The watch itself lives in App (app.jsx) so the trace survives the participant
+     leaving the map screen; here we only consume what it publishes on
+     'seoulwalk:gps'. Two DIFFERENT notions, deliberately kept apart:
+       · where the puck is drawn  → the real fix, as long as it's in the pilot bbox
+       · where the walk departs   → a node of the Jongno graph (syncStartNode)
+     Outside the bbox there is no graph and no scores, so both fall back to
+     FAKE_GPS and the participant is told the marker is a stand-in. That's also
+     what makes the app testable from a desktop far from Seoul. */
+  React.useEffect(() => {
+    const apply = () => {
+      const g = window.SeoulGps || { status: 'pending', fix: null };
+      gpsRef.current = g.fix;
+      gpsStatusRef.current = g.status;
+      setGpsStatus(g.status);
+      syncStartNode();
+      renderPuck();
+    };
+    apply();      // remounting the screen must not lose the position already known
+    window.addEventListener('seoulwalk:gps', apply);
+    return () => window.removeEventListener('seoulwalk:gps', apply);
+  }, []);
+
+  // The puck + its popup are DOM objects living outside React, so they're built once
+  // and then mutated in place rather than re-rendered.
+  function makePuck(map) {
+    if (puckRef.current) return;
+    const el = document.createElement('div');
+    el.style.cssText = 'width:18px;height:18px;border-radius:50%;background:' + MAP_PAL.accent +
+      ';border:3px solid #fff;box-shadow:0 0 0 6px ' + MAP_PAL.accent + '33, 0 2px 6px rgba(0,0,0,.4);';
+    puckPopupRef.current = new maplibregl.Popup({ offset: 14, maxWidth: '240px' });
+    puckRef.current = new maplibregl.Marker({ element: el }).setLngLat(FAKE_GPS)
+      .setPopup(puckPopupRef.current).addTo(map);
+    renderPuck();                 // a fix may have arrived before the map was ready
+  }
+
+  // Move the puck to wherever "you" are and keep its popup honest. Only a 'live' fix
+  // moves it; every other state (outside the zone, no permission, no fix yet) leaves
+  // it on FAKE_GPS — and the first time we settle for that, the popup opens itself so
+  // the participant isn't misled into thinking the marker is their real position.
+  function renderPuck() {
+    const map = mapRef.current, puck = puckRef.current, pop = puckPopupRef.current;
+    if (!map || !puck) return;
+    const st = gpsStatusRef.current, fix = gpsRef.current;
+    const live = st === 'live' && fix;
+    puck.setLngLat(live ? [fix.lng, fix.lat] : FAKE_GPS);
+    if (pop) {
+      pop.setHTML(
+        live ? '<b>You are here</b><br>live GPS · ±' + Math.round(fix.acc || 0) + ' m'
+        : st === 'outside' ? '<b>You are outside the study zone</b><br>A demo marker has been placed in Jongno for now, so you can keep using the app.'
+        : st === 'off' ? '<b>Demo start</b><br>No GPS (permission refused or no signal) — using the fixed Jongno start.'
+        : '<b>Demo start</b><br>Waiting for a GPS fix…'
+      );
+    }
+    if (!live && (st === 'outside' || st === 'off') && !demoNoticeRef.current) {
+      demoNoticeRef.current = true;
+      if (pop && !pop.isOpen()) puck.togglePopup();
+    }
+    // Recentre ONCE, on the first usable fix; afterwards never fight the user's panning.
+    if (live && !gpsCenteredRef.current) {
+      gpsCenteredRef.current = true;
+      map.easeTo({ center: [fix.lng, fix.lat], zoom: Math.max(map.getZoom(), 15.4), duration: 700 });
+    }
+  }
+
+  // Where the proposed walk departs from. Called both when the graph lands and on
+  // every fix, so whichever arrives first the other one still updates it.
+  function syncStartNode() {
+    const net = netRef.current;
+    if (!net) return;
+    const fix = gpsRef.current;
+    const p = (fix && gpsStatusRef.current === 'live') ? [fix.lng, fix.lat] : FAKE_GPS;
+    startNodeRef.current = nearestNode(net, p[0], p[1]);
+  }
 
   const EMPTY_FC = { type: 'FeatureCollection', features: [] };
 
@@ -2242,8 +2359,11 @@ function RealMapScreen() {
         {/* compact live vibe sliders — opened by the "✦ My vibe" chip */}
         {showSliders && <VibeSlidersPanel onVibeChange={onVibeSlidersChange}
           onClose={() => { setShowSliders(false); setSheetOpen(true); }} />}
-        {status && <div style={{ marginTop: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)',
-          background: 'var(--card)', borderRadius: t.radiusSm, padding: '5px 10px', display: 'inline-block', boxShadow: 'var(--shadow)' }}>{status}</div>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          <GpsBadge status={gpsStatus} />
+          {status && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)',
+            background: 'var(--card)', borderRadius: t.radiusSm, padding: '5px 10px', boxShadow: 'var(--shadow)' }}>{status}</div>}
+        </div>
       </div>
       )}
 

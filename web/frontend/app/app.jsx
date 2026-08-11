@@ -179,6 +179,43 @@ function FriendToasts() {
   );
 }
 
+/* ---- session-wide GPS -------------------------------------------------------
+   The geolocation watch lives HERE, at App level, on purpose: only the active
+   screen is mounted, so owning it in the map screen would punch a hole in the
+   recorded trace every time the participant checks their profile mid-walk.
+   Each fix is
+     · published on window.SeoulGps + a 'seoulwalk:gps' event — the map screen's
+       "you are here" puck and GPS badge listen to that, and
+     · thinned and buffered into StudyAPI, flushed to /gps every 15 s.
+   Needs a secure context: works on localhost and HTTPS, fails on plain http://
+   (e.g. a LAN IP opened from a phone) — which is what the badge makes visible. */
+const GPS_PAD = 0.003;        // ~300 m of margin around the pilot bbox
+const GPS_MIN_MS = 5000;      // record a point every 5 s...
+const GPS_MIN_M = 10;         // ...or every 10 m, whichever comes first
+const GPS_FLUSH_MS = 15000;
+
+function publishGps(status, fix) {
+  window.SeoulGps = { status: status, fix: fix || null };
+  try { window.dispatchEvent(new CustomEvent('seoulwalk:gps', { detail: window.SeoulGps })); } catch (e) {}
+}
+// Rough metres between two fixes — the same flat approximation used across the map
+// code, ample at city scale.
+function gpsMetres(a, b) {
+  const dy = (b.lat - a.lat) * 111320;
+  const dx = (b.lng - a.lng) * 111320 * Math.cos(a.lat * Math.PI / 180);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+// speed/heading are null when the device can't tell; some browsers hand back NaN
+// or -1 instead, and the API would reject those.
+function gpsNum(v) { return (typeof v === 'number' && isFinite(v) && v >= 0) ? v : null; }
+// Only fixes near the pilot zone are recorded. Outside it we are either testing
+// from a desk or standing at the participant's home — neither belongs in the
+// study database, and the consent covers the walk, not where they live.
+function nearStudyZone(lng, lat) {
+  return lng >= JONGNO_BBOX[0] - GPS_PAD && lng <= JONGNO_BBOX[2] + GPS_PAD
+      && lat >= JONGNO_BBOX[1] - GPS_PAD && lat <= JONGNO_BBOX[3] + GPS_PAD;
+}
+
 function App() {
   const [themeId, setThemeId] = usePersist('themeId', 'wander');
   const [screen, setScreen] = usePersist('screen', 'landing');
@@ -198,6 +235,49 @@ function App() {
     if (!sessionReady || !window.StudyAPI || !window.StudyAPI.startFriendPolling) return;
     window.StudyAPI.startFriendPolling(10000);
     return () => { if (window.StudyAPI.stopFriendPolling) window.StudyAPI.stopFriendPolling(); };
+  }, [sessionReady]);
+
+  // GPS watch + trace upload for the whole session — see the notes above. Gated on
+  // the session so the permission prompt lands after the consent screen, not before.
+  React.useEffect(() => {
+    if (!sessionReady) return;
+    const S = window.StudyAPI;
+    if (!navigator.geolocation) { publishGps('off', null); return; }
+    let lastKept = null;             // last fix actually written to the buffer
+    // enableHighAccuracy → the real GNSS rather than a Wi-Fi guess; it costs
+    // battery, which is the right trade for a study session that needs a trace.
+    const watchId = navigator.geolocation.watchPosition(
+      pos => {
+        const c = pos.coords;
+        const fix = { lng: c.longitude, lat: c.latitude, acc: c.accuracy, ts: pos.timestamp };
+        publishGps(inJongno(fix.lng, fix.lat) ? 'live' : 'outside', fix);
+        if (!S || !S.logGps || !nearStudyZone(fix.lng, fix.lat)) return;
+        // Thin the stream: watchPosition can fire several times per second, which
+        // would mean tens of thousands of rows for one 40-minute walk. Accuracy is
+        // NOT filtered — accuracy_m is stored so poor fixes can be dropped at
+        // analysis time, whereas dropping them here loses them for good.
+        if (lastKept && (fix.ts - lastKept.ts) < GPS_MIN_MS && gpsMetres(lastKept, fix) < GPS_MIN_M) return;
+        lastKept = fix;
+        S.logGps({
+          ts: new Date(fix.ts).toISOString(), lat: fix.lat, lng: fix.lng,
+          accuracy_m: gpsNum(fix.acc), speed: gpsNum(c.speed), heading: gpsNum(c.heading),
+        });
+      },
+      err => { console.warn('[gps] ' + err.code + ' ' + err.message); publishGps('off', null); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+    );
+    const flush = () => { if (S && S.flushGps) S.flushGps(); };
+    const timer = setInterval(flush, GPS_FLUSH_MS);
+    // Backgrounding the app is when the tab is most likely to be frozen or killed,
+    // so push whatever is buffered right then.
+    const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onHide);
+      flush();
+    };
   }, [sessionReady]);
 
   const screens = {
