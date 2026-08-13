@@ -33,13 +33,13 @@ function Label({ children, style }) {
 }
 
 // ---- primary button ----
-function PrimaryBtn({ children, onClick, style }) {
+function PrimaryBtn({ children, onClick, style, disabled }) {
   const t = React.useContext(ThemeCtx);
   const [press, setPress] = React.useState(false);
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} disabled={!!disabled}
     onPointerDown={() => setPress(true)} onPointerUp={() => setPress(false)} onPointerLeave={() => setPress(false)}
-    style={{ width: '100%', minHeight: 56, border: 'none', cursor: 'pointer',
+    style={{ width: '100%', minHeight: 56, border: 'none', cursor: disabled ? 'default' : 'pointer',
       borderRadius: t.radiusSm + 4, background: 'var(--accent)', color: 'var(--accent-ink)',
       fontFamily: t.fontUI, fontSize: 16, fontWeight: 700, letterSpacing: '0.005em',
       boxShadow: t.name === 'Candy' ? '0 6px 0 0 rgba(20,20,25,0.85)' : 'var(--shadow)',

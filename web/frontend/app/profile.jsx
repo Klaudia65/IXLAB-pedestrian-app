@@ -306,6 +306,43 @@ function ProfileScreen({ go }) {
   }
   const toggleFriend = pid => setJoining({ ...joining, [pid]: !joining[pid] });
 
+  // Starting the exploration with friends toggled on is the moment the walk stops being
+  // local and becomes SHARED: it opens a walk on the server and invites them, which is
+  // the only thing their phones can poll. Without it the toggles below never leave this
+  // device, so the group axes only ever exist here. Created on this deliberate tap rather
+  // than on every toggle — one walk per start, not one per checkbox.
+  //
+  // An existing walk is reused instead of replaced: a walk I only got invited to isn't
+  // mine to close, and my own live walk already carries the negotiation. The one case that
+  // does re-open it is a crew that no longer matches — a friend toggled on after the walk
+  // started has no row on it, so they would never be invited at all.
+  const [startBusy, setStartBusy] = React.useState(false);
+  async function startExploration() {
+    const S = window.StudyAPI || {};
+    const ids = friendList.filter(f => joining[f.participant_id]).map(f => f.participant_id);
+    if (startBusy) return;
+    if (!ids.length || !S.createWalk) { go('map2'); return; }      // solo → straight to the map
+
+    const live = S.currentWalk && S.currentWalk();
+    const myPid = S.myParticipantId && S.myParticipantId();
+    const iHost = !!live && myPid != null && live.host_id === myPid;
+    // Someone who said "not now" counts as NOT on the walk: toggling them back on is a
+    // second ask, and reusing the walk would leave them with no way back onto it.
+    const onWalk = live
+      ? live.members.filter(m => m.status !== 'declined').map(m => String(m.participant_id))
+      : [];
+    const allInvited = ids.every(i => onWalk.indexOf(String(i)) >= 0);
+    if (live && (!iHost || allInvited)) { go('group'); return; }
+
+    setStartBusy(true);
+    const walk = await S.createWalk(ids, window.myWalkSnapshot());
+    setStartBusy(false);
+    if (S.logEvent) S.logEvent('walk_start', { invited: ids, walk_id: walk && walk.walk_id });
+    // The negotiation is the shared thing, so the host lands on it too — both phones are
+    // then looking at the same axes, and 'Find our spot' there is what opens the map.
+    go(walk ? 'group' : 'map2');
+  }
+
   const iconBtn = {
     width: 44, height: 44, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
     cursor: 'pointer', background: 'transparent', border: '1px solid transparent',
@@ -543,7 +580,10 @@ function ProfileScreen({ go }) {
         backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)', borderTop: '1px solid rgba(255,255,255,0.5)',
         display: 'flex', flexDirection: 'column', gap: 10 }}>
         <Label style={{ textAlign: 'center', color: 'var(--ink-faint)' }}>{ctaMeta}</Label>
-        <PrimaryBtn onClick={() => go('map2')} style={{ background: accent, boxShadow: `0 0 24px ${accent}66` }}>Start your exploration</PrimaryBtn>
+        <PrimaryBtn onClick={startExploration} disabled={startBusy}
+          style={{ background: accent, boxShadow: `0 0 24px ${accent}66`, opacity: startBusy ? 0.7 : 1 }}>
+          {startBusy ? 'Inviting…' : friendCount > 0 ? `Start with ${friendCount} friend${friendCount > 1 ? 's' : ''}` : 'Start your exploration'}
+        </PrimaryBtn>
       </div>
     </div>
   );

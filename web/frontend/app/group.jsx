@@ -272,6 +272,12 @@ function GroupScreen({ go }) {
   const invited = !!myRow && myRow.status === 'invited';
   const hostRow = walk && walk.members.find(m => m.participant_id === walk.host_id);
   const hostName = (hostRow && hostRow.display_name) || 'A friend';
+  // Friends the walk has reached who haven't answered yet. On the host's phone this is
+  // the honest version of "invitation sent": they are on the axes, but with no taste of
+  // their own until they join, so the screen must not read as if they had agreed to it.
+  const waitingToJoin = (walk ? walk.members : [])
+    .filter(m => m.status === 'invited' && String(m.participant_id) !== me)
+    .map(m => m.display_name || 'a friend');
 
   async function joinWalk(accept) {
     const S = window.StudyAPI;
@@ -356,8 +362,15 @@ function GroupScreen({ go }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         {members.map((p) =>
         <div key={p.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-            <Avatar p={p} size={46} />
+            <div style={{ opacity: p.pendingJoin ? 0.55 : 1 }}><Avatar p={p} size={46} /></div>
             <span style={{ fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600 }}>{p.name}</span>
+            {/* Someone who hasn't answered is drawn faded and labelled, so the avatars
+                never imply a taste the walk hasn't actually got yet. */}
+            {p.pendingJoin && (
+              <span style={{ fontFamily: t.fontMono, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>
+                {p.isMe ? 'not joined' : 'invited'}
+              </span>
+            )}
           </div>
         )}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
@@ -381,6 +394,17 @@ function GroupScreen({ go }) {
           <div style={{ display: 'flex', gap: 7 }}>
             <AxisBtn kind="accept" onClick={() => joinWalk(true)}>Join the walk</AxisBtn>
             <AxisBtn onClick={() => joinWalk(false)}>Not now</AxisBtn>
+          </div>
+        </div>
+      )}
+
+      {!invited && waitingToJoin.length > 0 && (
+        <div style={{ marginTop: 14, padding: '11px 14px', borderRadius: 14,
+          border: '1px solid var(--line-strong)', background: 'var(--card)' }}>
+          <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--ink-soft)' }}>
+            This walk is on <b style={{ color: 'var(--ink)' }}>{waitingToJoin.join(', ')}</b>'s
+            {waitingToJoin.length > 1 ? ' phones' : ' phone'} too — these same axes. Their taste
+            joins the negotiation when they tap <b style={{ color: 'var(--ink)' }}>Join the walk</b>.
           </div>
         </div>
       )}

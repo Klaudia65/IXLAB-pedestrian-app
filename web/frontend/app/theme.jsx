@@ -694,11 +694,11 @@ function levelsFromVector(vec) {
 // The group on THIS walk, each with the taste vector and levels the negotiation runs on.
 //
 // Two sources, in order of authority:
-//   1. A SHARED walk — the group is its accepted members, with the taste each of them
-//      froze when they accepted, mine included. Every phone therefore reconciles the
-//      exact same numbers. My live sliders deliberately do NOT steer the group here:
-//      once a walk is shared, the target moves by agreement, not by one person
-//      dragging a slider on their own screen.
+//   1. A SHARED walk — the group is its members, with the taste each of them froze when
+//      they accepted, mine included; the ones still to answer come along as pending.
+//      Every phone therefore reconciles the exact same numbers. My live sliders
+//      deliberately do NOT steer the group here: once a walk is shared, the target moves
+//      by agreement, not by one person dragging a slider on their own screen.
 //   2. No walk — the local prototype path: me plus the friends toggled on in my
 //      profile, using their latest published profile vector.
 function buildGroupMembers(userVec) {
@@ -708,27 +708,34 @@ function buildGroupMembers(userVec) {
   const walk = S.currentWalk && S.currentWalk();
   const rows = (walk && walk.members) || [];
   const accepted = rows.filter(m => m.status === 'accepted');
-  const myRow = rows.find(m => String(m.participant_id) === myId);
-  const iAmInvited = !!myRow && myRow.status === 'invited';
+  const pendingRows = rows.filter(m => m.status === 'invited');
 
   if (accepted.length) {
-    // A friend has opened a walk and I have not answered yet. Put me on the axes ANYWAY,
-    // with my live taste, so the screen shows what this walk looks like with me in it —
-    // otherwise being invited means watching a negotiation I am absent from. My vector is
-    // not on the walk until I accept, so the other phones genuinely do not have it yet:
-    // `pendingJoin` marks that, and the screen says so rather than implying I'm in.
-    const list = iAmInvited ? accepted.concat([myRow]) : accepted;
+    // Everyone the walk has reached is on the axes, accepted first, and the ones who
+    // have not answered yet are marked `pendingJoin`. Both directions need this:
+    //   · on the HOST's phone it is what keeps the negotiation on screen in the seconds
+    //     (or minutes) between "start the walk" and the first friend tapping Join —
+    //     otherwise the group reads as empty exactly when the host is showing it around;
+    //   · on an INVITED phone it puts ME on the axes before I answer, so being invited
+    //     isn't watching a negotiation I'm absent from.
+    // Nobody pending contributes a taste vector — the server only freezes one on accept —
+    // and a missing vector is neutral/flexible everywhere downstream, so a pending member
+    // is visible without silently voting. Mine is the exception: my own live taste is
+    // right here, so I show it (the other phones still don't have it, which is what
+    // `pendingJoin` says).
+    const list = accepted.concat(pendingRows);
     let f = 0;
     return list.map(m => {
       const id = String(m.participant_id);
       const isMe = id === myId;
+      const pending = m.status === 'invited';
       const name = isMe ? myName : (m.display_name || 'friend');
       return {
         id, name, init: tasteInitials(name), isMe,
-        pendingJoin: isMe && iAmInvited,
+        pendingJoin: pending,
         hue: isMe ? PERSON_HUES.me : PERSON_HUES.friends[(f++) % PERSON_HUES.friends.length],
-        vec: (isMe && iAmInvited) ? (userVec || readUserTasteVector()) : (m.vector || (isMe ? (userVec || readUserTasteVector()) : {})),
-        levels: (isMe && iAmInvited) ? readAxisLevels() : (m.levels || levelsFromVector(m.vector)),
+        vec: (isMe && pending) ? (userVec || readUserTasteVector()) : (m.vector || (isMe ? (userVec || readUserTasteVector()) : {})),
+        levels: (isMe && pending) ? readAxisLevels() : (m.levels || levelsFromVector(m.vector)),
       };
     });
   }
