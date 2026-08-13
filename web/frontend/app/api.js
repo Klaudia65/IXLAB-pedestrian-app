@@ -266,12 +266,60 @@
     return walkCache;
   }
 
+  // Invitations to walks OTHER than the one I'm on. The server keeps them out of `walk`
+  // on purpose (an invitation must not swap a negotiation under the group's feet), so
+  // they travel beside it and the UI turns them into a "join theirs instead?" offer.
+  // 'seoulwalk:walkinvites' carries BOTH the full list (for a screen that wants to show
+  // it) and `fresh` — the ones never announced yet, which is what a one-shot popup needs:
+  // the poll runs every 2.5 s and re-toasting the same invitation would be unusable.
+  var INVITES_SEEN_KEY = 'seoulwalk.walk.invites.seen';
+  var invitesCache = [];
+  function loadInvitesSeen() {
+    try { return JSON.parse(localStorage.getItem(INVITES_SEEN_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function pendingInvites() { return invitesCache.slice(); }
+  function emitInvites(list) {
+    list = list || [];
+    var seen = loadInvitesSeen();
+    var ids = list.map(function (i) { return i.walk_id; });
+    var fresh = list.filter(function (i) { return seen.indexOf(i.walk_id) < 0; });
+    var was = invitesCache.map(function (i) { return i.walk_id; });
+    invitesCache = list;
+    // Only LIVE invitations stay remembered, so one that ends and is offered again later
+    // can announce itself a second time, and the memory can't grow without bound.
+    try { localStorage.setItem(INVITES_SEEN_KEY, JSON.stringify(ids)); } catch (e) {}
+    // Fire on any change, not only on arrivals: an invitation that goes away (accepted
+    // elsewhere, or the walk ended) has to leave the screens that were showing it.
+    if (fresh.length || ids.join(',') !== was.join(',')) {
+      try {
+        window.dispatchEvent(new CustomEvent('seoulwalk:walkinvites', {
+          detail: { invites: invitesCache, fresh: fresh }
+        }));
+      } catch (e) {}
+    }
+    return invitesCache;
+  }
+
   function refreshWalk() {
     if (!sid()) return Promise.resolve(null);
     return fetch(BASE_URL + '/sessions/' + sid() + '/walks/current', { headers: headers() })
       .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
-      .then(function (r) { return emitWalk(r && r.walk); })
+      .then(function (r) {
+        // Invitations first: emitWalk can move the screen, and it should move with the
+        // popup's list already up to date.
+        if (r) emitInvites(r.invites);
+        return emitWalk(r && r.walk);
+      })
       .catch(function (e) { console.warn('[StudyAPI] refreshWalk failed', e); return walkCache; });
+  }
+
+  // Invite friends to the walk already under way (the group screen's '+'). Unlike
+  // createWalk this keeps the negotiation: a latecomer joins the bargaining as it stands.
+  function inviteToWalk(ids) {
+    var wid = currentWalkId();
+    if (!wid) return Promise.resolve(null);
+    return scoped('/walks/' + wid + '/invite', { invite: (ids || []).map(Number) })
+      .then(function (w) { return w && w.walk_id ? emitWalk(w) : null; });
   }
 
   // Open a walk and invite friends. `snapshot` is { vector, levels } — the host's
@@ -285,12 +333,23 @@
   }
 
   function answerWalk(accept, snapshot) {
-    var wid = currentWalkId();
+    return answerWalkById(currentWalkId(), accept, snapshot);
+  }
+
+  // Answer a walk by id — needed because the walk being answered is not always the
+  // current one: accepting an invitation from the popup means saying yes to a DIFFERENT
+  // walk, and the server then makes that one current (and drops me from the old one), so
+  // we re-read rather than trust the answer's own payload to be the new truth.
+  function answerWalkById(wid, accept, snapshot) {
     if (!wid) return Promise.resolve(null);
     snapshot = snapshot || {};
     return scoped('/walks/' + wid + '/answer', {
       accept: !!accept, vector: snapshot.vector || null, levels: snapshot.levels || null
-    }).then(function (w) { return w && w.walk_id ? emitWalk(w) : null; });
+    }).then(function (w) {
+      if (!w || !w.walk_id) return null;
+      if (accept && w.walk_id !== currentWalkId()) return refreshWalk();
+      return emitWalk(w);
+    });
   }
 
   function setWalkStatus(status) {
@@ -477,8 +536,9 @@
     myFriendCode: myFriendCode, addFriend: addFriend, myFriends: myFriends,
     myParticipantId: myParticipantId,
     currentWalk: currentWalk, currentWalkId: currentWalkId, refreshWalk: refreshWalk,
-    createWalk: createWalk, answerWalk: answerWalk, setWalkStatus: setWalkStatus,
-    patchWalkState: patchWalkState,
+    createWalk: createWalk, answerWalk: answerWalk, answerWalkById: answerWalkById,
+    inviteToWalk: inviteToWalk, pendingInvites: pendingInvites,
+    setWalkStatus: setWalkStatus, patchWalkState: patchWalkState,
     startWalkPolling: startWalkPolling, stopWalkPolling: stopWalkPolling,
     refreshFriends: refreshFriends, refreshFriendActivity: refreshFriendActivity,
     startFriendPolling: startFriendPolling, stopFriendPolling: stopFriendPolling,

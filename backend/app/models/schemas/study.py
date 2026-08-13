@@ -150,6 +150,14 @@ class WalkCreate(BaseModel):
     levels: dict[str, str] | None = None              # the host's declared per-axis levels
 
 
+class WalkInviteIn(BaseModel):
+    """Add people to a walk that already exists (the '+ invite' button on the group
+    screen). Separate from WalkCreate on purpose: inviting a latecomer must not reopen
+    the walk, which would throw away the negotiation already agreed on it."""
+
+    invite: list[int] = []                            # participant ids (must be the inviter's friends)
+
+
 class WalkAnswerIn(BaseModel):
     accept: bool                                      # False = decline the invitation
     vector: dict[str, float | None] | None = None     # my taste snapshot, frozen at this moment
@@ -188,6 +196,17 @@ class WalkOut(BaseModel):
     state: dict = {}
     version: int
     members: list[WalkMemberOut] = []
+
+
+class WalkInvitationOut(BaseModel):
+    """A pending invitation to a walk OTHER than the one I'm currently on — what the
+    transient "join their walk instead?" popup is built from. Deliberately thin: the
+    negotiation of a walk I haven't accepted is none of my business yet."""
+
+    walk_id: int
+    host_id: int
+    host_name: str | None = None
+    member_count: int = 0
 
 
 # --- generic events ---------------------------------------------------------

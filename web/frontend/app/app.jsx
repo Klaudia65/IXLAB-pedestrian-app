@@ -123,17 +123,43 @@ function ConsentGate({ onDone }) {
 //                ('seoulwalk:friendsearch' → `searches`), a "want to go together?"
 //                nudge. Gated to joining friends so it only fires when you're
 //                actually out together.
+//   · 'invite' — I'm already on a walk and someone else invited me to theirs
+//                ('seoulwalk:walkinvites' → `fresh`). The only ACTIONABLE toast: it
+//                carries Join / Later, and Join switches walks.
 // Rendered inside the DeviceFrame so it's themed, clipped, and shows on ANY screen.
-function FriendToasts() {
+function FriendToasts({ go }) {
   const t = React.useContext(ThemeCtx);
   const [toasts, setToasts] = React.useState([]);
   const seq = React.useRef(0);
+  const drop = id => setToasts(prev => prev.filter(x => x.id !== id));
+  // Accept an invitation to ANOTHER walk straight from the popup. The server makes that
+  // walk current and drops me from the one I was on, so the only thing left to do here is
+  // go and look at it — the group screen re-reads from the poll like every other change.
+  async function joinOther(ft) {
+    drop(ft.id);
+    const S = window.StudyAPI || {};
+    if (!S.answerWalkById) return;
+    await S.answerWalkById(ft.walkId, true, window.myWalkSnapshot && window.myWalkSnapshot());
+    if (S.logEvent) S.logEvent('walk_switch', { walk_id: ft.walkId });
+    if (go) go('group');
+  }
   React.useEffect(() => {
     const push = (toast, ttl) => {
       const id = 'ft' + (seq.current++);
       setToasts(prev => [...prev, { id, ...toast }]);
       setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), ttl);
     };
+    // Someone invited me to a walk while I'm already on another one. This is an OFFER,
+    // never a move: the popup lives a few seconds and switching only happens if it is
+    // tapped. It gets the longest life of any toast here because it asks a question, and
+    // the group screen keeps the same offer once it is gone — a decision that only exists
+    // for seven seconds is a decision the participant can lose by looking away.
+    function onWalkInvites(e) {
+      const fresh = (e.detail && e.detail.fresh) || [];
+      fresh.forEach(iv => push({
+        kind: 'invite', walkId: iv.walk_id, name: iv.host_name || 'A friend', count: iv.member_count,
+      }, 9000));
+    }
     function onFriends(e) {
       const added = (e.detail && e.detail.added) || [];
       added.forEach(f => push({ kind: 'add', name: f.display_name || f.friend_code || 'A friend' }, 4800));
@@ -167,12 +193,14 @@ function FriendToasts() {
     window.addEventListener('seoulwalk:friends', onFriends);
     window.addEventListener('seoulwalk:friendsearch', onFriendSearch);
     window.addEventListener('seoulwalk:walk', onWalk);
+    window.addEventListener('seoulwalk:walkinvites', onWalkInvites);
     return () => {
       window.removeEventListener('seoulwalk:friends', onFriends);
       window.removeEventListener('seoulwalk:friendsearch', onFriendSearch);
       window.removeEventListener('seoulwalk:walk', onWalk);
+      window.removeEventListener('seoulwalk:walkinvites', onWalkInvites);
     };
-  }, []);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   if (!toasts.length) return null;
   return (
     <div style={{ position: 'absolute', left: 0, right: 0, bottom: 74, zIndex: 60, pointerEvents: 'none',
@@ -184,15 +212,33 @@ function FriendToasts() {
           boxShadow: '0 10px 34px rgba(0,0,0,0.30)', animation: 'ftIn .32s cubic-bezier(.22,1,.36,1)' }}>
           <span style={{ width: 28, height: 28, borderRadius: 999, flex: '0 0 auto', background: 'var(--accent)', color: '#fff',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.fontMono, fontSize: 11, fontWeight: 700 }}>
-            {ft.kind === 'search' ? '🔎' : ft.kind === 'walk' ? '🚶' : String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
+            {ft.kind === 'search' ? '🔎' : ft.kind === 'walk' ? '🚶' : ft.kind === 'invite' ? '✋' : String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
           </span>
           <span style={{ fontFamily: t.fontUI, fontSize: 13.5, fontWeight: 600 }}>
             {ft.kind === 'search'
               ? <span><b>{ft.name}</b> keeps looking for <b>{ft.query}</b> — go together?</span>
               : ft.kind === 'walk'
                 ? <span><b>{ft.name}</b> started a walk with you{ft.joined ? '' : ' — open Group · axes to join'}</span>
-                : <span><b>{ft.name}</b> added you as a friend</span>}
+                : ft.kind === 'invite'
+                  ? <span><b>{ft.name}</b> wants you on their walk{ft.count > 1 ? ` (${ft.count} people)` : ''}</span>
+                  : <span><b>{ft.name}</b> added you as a friend</span>}
           </span>
+          {/* An invitation is the only toast you can act on, so it carries its own buttons:
+              switching walks is a real decision and must not be a tap on the whole pill. */}
+          {ft.kind === 'invite' && (
+            <span style={{ display: 'flex', gap: 6, flex: '0 0 auto', marginLeft: 2 }}>
+              <button onClick={() => joinOther(ft)}
+                style={{ border: 'none', cursor: 'pointer', borderRadius: 999, padding: '7px 12px',
+                  background: 'var(--paper)', color: 'var(--ink)', fontFamily: t.fontUI, fontSize: 12.5, fontWeight: 800 }}>
+                Join
+              </button>
+              <button onClick={() => drop(ft.id)} title="Stay on your walk"
+                style={{ border: '1px solid rgba(255,255,255,0.35)', cursor: 'pointer', borderRadius: 999, padding: '7px 10px',
+                  background: 'transparent', color: 'var(--paper)', fontFamily: t.fontUI, fontSize: 12.5, fontWeight: 700 }}>
+                Later
+              </button>
+            </span>
+          )}
         </div>
       ))}
     </div>
@@ -360,7 +406,7 @@ function App() {
           </div>
           {bare && sessionReady && <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} screen={activeScreen}
             go={(id) => { setScreen(id); setDrawerOpen(false); }} />}
-          {sessionReady && <FriendToasts />}
+          {sessionReady && <FriendToasts go={go} />}
         </DeviceFrame>
       </div>
     </ThemeCtx.Provider>

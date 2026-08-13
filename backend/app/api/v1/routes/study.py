@@ -43,6 +43,8 @@ from app.models.schemas.study import (
     SliderChangeIn,
     WalkAnswerIn,
     WalkCreate,
+    WalkInvitationOut,
+    WalkInviteIn,
     WalkMemberOut,
     WalkOut,
     WalkStateIn,
@@ -594,22 +596,79 @@ async def create_walk(
     return await _walk_out(db, walk_id, pid)
 
 
+@router.post("/{session_id}/walks/{walk_id}/invite", response_model=WalkOut)
+async def invite_to_walk(
+    session_id: int, walk_id: int, body: WalkInviteIn, db: AsyncSession = Depends(get_db)
+):
+    """Add people to a walk already under way — the '+ invite' button on the group
+    screen. Distinct from POST /walks: that one OPENS a walk (and closes the host's
+    previous one), which would discard a negotiation the group has already settled.
+
+    Any ACCEPTED member may invite, not just the host: on a walk between friends the
+    person who knows the latecomer is rarely the one who opened it. The friendship check
+    is against the INVITER, so this still cannot reach a stranger. Someone already on the
+    walk is left alone; someone who previously declined is asked again (a fresh invite is
+    a new question, and refusing once must not lock them out for good)."""
+    pid = await _participant_of_session(db, session_id)
+    if await _require_member(db, walk_id, pid) != "accepted":
+        raise HTTPException(status_code=403, detail="join the walk before inviting others")
+    if (await db.execute(
+        text("SELECT status FROM walk WHERE id = :wid"), {"wid": walk_id}
+    )).scalar_one_or_none() == "ended":
+        raise HTTPException(status_code=409, detail="this walk has ended")
+
+    friends = {f.participant_id for f in await _fetch_friends(db, pid)}
+    invitees = [i for i in dict.fromkeys(body.invite) if i != pid]
+    strangers = [i for i in invitees if i not in friends]
+    if strangers:
+        raise HTTPException(status_code=403, detail=f"not your friends: {strangers}")
+    if invitees:
+        await db.execute(text("""
+            INSERT INTO walk_member (walk_id, participant_id, role, status)
+            VALUES (:wid, :pid, 'guest', 'invited')
+            ON CONFLICT (walk_id, participant_id) DO UPDATE
+               SET status = 'invited', invited_at = NOW(), answered_at = NULL
+             WHERE walk_member.status = 'declined'
+        """), [{"wid": walk_id, "pid": i} for i in invitees])
+        await _log_walk_event(db, walk_id, pid, "invite", None, {"invited": invitees})
+    return await _walk_out(db, walk_id, pid)
+
+
 @router.get("/{session_id}/walks/current")
 async def current_walk(session_id: int, db: AsyncSession = Depends(get_db)):
-    """The walk this participant is on or has been invited to, newest first, or
-    {"walk": null} when there is none. This is the one route the client polls, so it
-    answers every question a phone has: am I invited, who accepted, what has been
-    proposed, and at which version."""
+    """The walk this participant is on, plus any OTHER walk they've been invited to.
+
+    Which walk is "current" is decided by status before recency: a walk I have ACCEPTED
+    wins over a newer invitation. Otherwise being invited somewhere would silently swap
+    the negotiation under the feet of a group already bargaining — the invitation has to
+    be an offer, not a takeover. Unaccepted invitations therefore ride along in
+    `invites`, which is what the transient "join their walk instead?" popup reads. This
+    is the one route the client polls, so it answers every question a phone has: am I
+    invited, who accepted, what has been proposed, at which version, and is someone else
+    asking for me too."""
     pid = await _participant_of_session(db, session_id)
     walk_id = (await db.execute(text("""
         SELECT w.id FROM walk w
         JOIN walk_member wm ON wm.walk_id = w.id AND wm.participant_id = :pid
         WHERE w.status <> 'ended' AND wm.status <> 'declined'
-        ORDER BY w.created_at DESC LIMIT 1
+        ORDER BY (wm.status = 'accepted') DESC, w.created_at DESC LIMIT 1
     """), {"pid": pid})).scalar_one_or_none()
-    if walk_id is None:
-        return {"walk": None}
-    return {"walk": await _walk_out(db, walk_id, pid)}
+    invites = (await db.execute(text("""
+        SELECT w.id AS walk_id, w.host_id, p.display_name AS host_name,
+               (SELECT COUNT(*) FROM walk_member m
+                 WHERE m.walk_id = w.id AND m.status = 'accepted') AS member_count
+          FROM walk w
+          JOIN walk_member wm ON wm.walk_id = w.id AND wm.participant_id = :pid
+          JOIN participant p ON p.id = w.host_id
+         WHERE w.status <> 'ended' AND wm.status = 'invited'
+           -- cast: with no current walk the parameter is NULL, and Postgres cannot infer
+           -- the type of a bare placeholder compared to nothing
+           AND (CAST(:cur AS integer) IS NULL OR w.id <> CAST(:cur AS integer))
+         ORDER BY wm.invited_at DESC
+    """), {"pid": pid, "cur": walk_id})).mappings().all()
+    out = {"invites": [WalkInvitationOut(**r) for r in invites]}
+    out["walk"] = await _walk_out(db, walk_id, pid) if walk_id is not None else None
+    return out
 
 
 @router.post("/{session_id}/walks/{walk_id}/answer", response_model=WalkOut)
@@ -618,9 +677,26 @@ async def answer_walk(
 ):
     """Accept or decline an invitation. Accepting is the moment the taste is frozen:
     from here the negotiation is over THIS vector, not whatever the profile becomes
-    later. Declining leaves the row for the record but drops the person from the walk."""
+    later. Declining leaves the row for the record but drops the person from the walk.
+
+    Nobody walks twice at once, so accepting one walk LEAVES every other live one: a walk
+    I merely sat on becomes 'declined' (the group stops waiting on me), and one I was
+    hosting is ended outright — a host who has gone elsewhere would otherwise leave the
+    others bargaining on a walk whose owner is absent."""
     pid = await _participant_of_session(db, session_id)
     await _require_member(db, walk_id, pid)
+    if body.accept:
+        await db.execute(text("""
+            UPDATE walk SET status = 'ended', ended_at = NOW()
+             WHERE id <> :wid AND host_id = :pid AND status <> 'ended'
+        """), {"wid": walk_id, "pid": pid})
+        await db.execute(text("""
+            UPDATE walk_member wm
+               SET status = 'declined', answered_at = NOW()
+             WHERE wm.participant_id = :pid AND wm.walk_id <> :wid
+               AND wm.status <> 'declined'
+               AND EXISTS (SELECT 1 FROM walk w WHERE w.id = wm.walk_id AND w.status <> 'ended')
+        """), {"wid": walk_id, "pid": pid})
     updated = (await db.execute(text("""
         UPDATE walk_member
            SET status = :st, answered_at = NOW(),

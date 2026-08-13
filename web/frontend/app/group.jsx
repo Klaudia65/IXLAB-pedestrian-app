@@ -286,6 +286,49 @@ function GroupScreen({ go }) {
     bump(x => x + 1);
     if (S.logEvent) S.logEvent(accept ? 'walk_join' : 'walk_decline', { walk_id: walk && walk.walk_id });
   }
+
+  // ---- '+ invite': add someone from right here -------------------------------------
+  // The picker lists my friends who aren't on the walk yet. Inviting mid-walk goes through
+  // /invite, which keeps the negotiation intact; with no shared walk yet the same tap OPENS
+  // one, so "invite" means the same thing whether or not the walk has left this phone.
+  const [pickOpen, setPickOpen] = React.useState(false);
+  const [inviting, setInviting] = React.useState(null);       // participant_id in flight
+  const onWalkIds = new Set((walk ? walk.members : [])
+    .filter(m => m.status !== 'declined')
+    .map(m => String(m.participant_id)));
+  const invitable = React.useMemo(
+    () => ((window.StudyAPI && window.StudyAPI.myFriends && window.StudyAPI.myFriends()) || [])
+      .filter(f => !onWalkIds.has(String(f.participant_id))),
+    [rev]);                                                          // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function invite(f) {
+    const S = window.StudyAPI || {};
+    if (inviting != null) return;
+    setInviting(f.participant_id);
+    if (walk && !invited) await S.inviteToWalk([f.participant_id]);
+    else if (!walk && S.createWalk) await S.createWalk([f.participant_id], window.myWalkSnapshot());
+    setInviting(null);
+    setPickOpen(false);
+    bump(x => x + 1);
+    if (S.logEvent) S.logEvent('walk_invite', { invited: [f.participant_id], walk_id: S.currentWalkId && S.currentWalkId() });
+  }
+
+  // Invitations to OTHER walks. The popup that announces one lasts seconds; this row is
+  // where it still lives afterwards, so the choice can't be lost by looking away.
+  const [otherInvites, setOtherInvites] = React.useState(
+    () => (window.StudyAPI && window.StudyAPI.pendingInvites && window.StudyAPI.pendingInvites()) || []);
+  React.useEffect(() => {
+    const on = e => setOtherInvites((e.detail && e.detail.invites) || []);
+    window.addEventListener('seoulwalk:walkinvites', on);
+    return () => window.removeEventListener('seoulwalk:walkinvites', on);
+  }, []);
+  async function switchTo(iv) {
+    const S = window.StudyAPI || {};
+    if (!S.answerWalkById) return;
+    await S.answerWalkById(iv.walk_id, true, window.myWalkSnapshot());
+    bump(x => x + 1);
+    if (S.logEvent) S.logEvent('walk_switch', { walk_id: iv.walk_id });
+  }
   const soloOnly = !gt.group;                                        // nobody toggled to join yet
   // Walking solo there is no negotiation to report, but the header still shows who's
   // here — buildGroupMembers always yields at least me.
@@ -374,11 +417,65 @@ function GroupScreen({ go }) {
           </div>
         )}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-          <button onClick={() => go('profile')} title="Pick who's coming from your profile"
-            style={{ width: 46, height: 46, borderRadius: '50%', border: '1.5px dashed var(--line-strong)', background: 'transparent', color: 'var(--ink-faint)', fontSize: 22, lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+          <button onClick={() => setPickOpen(o => !o)} title="Invite a friend onto this walk"
+            style={{ width: 46, height: 46, borderRadius: '50%', border: `1.5px dashed ${pickOpen ? DS.friends : 'var(--line-strong)'}`, background: 'transparent', color: pickOpen ? DS.friends : 'var(--ink-faint)', fontSize: 22, lineHeight: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
           <span style={{ fontSize: 11.5, color: 'var(--ink-faint)', fontWeight: 600 }}>invite</span>
         </div>
       </div>
+
+      {/* the picker: my friends who aren't on this walk, one tap each */}
+      {pickOpen && (
+        <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 16, border: `1.5px solid ${DS.friends}55`,
+          background: `color-mix(in srgb, ${DS.friends} 6%, var(--card))` }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 9 }}>
+            <span style={{ fontFamily: t.fontMono, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>
+              {invited ? 'Join first, then you can invite' : walk ? 'Add to this walk' : 'Start a walk with'}
+            </span>
+            <button onClick={() => setPickOpen(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 11.5, fontWeight: 700, color: 'var(--ink-faint)' }}>close</button>
+          </div>
+          {invited ? (
+            <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--ink-soft)' }}>
+              You haven't joined this walk yet, so you can't bring anyone onto it — tap <b style={{ color: 'var(--ink)' }}>Join the walk</b> first.
+            </div>
+          ) : invitable.length === 0 ? (
+            <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--ink-soft)' }}>
+              Everyone you know is already here. Add friends by code from your <button onClick={() => go('profile')} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', font: 'inherit', fontWeight: 700, color: 'var(--ink)', textDecoration: 'underline' }}>profile</button>.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {invitable.map(f => {
+                const name = f.display_name || f.friend_code || 'friend';
+                const busy = inviting === f.participant_id;
+                return (
+                  <div key={f.participant_id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ width: 30, height: 30, borderRadius: 999, flex: '0 0 auto', background: 'var(--card-2)',
+                      border: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontFamily: t.fontMono, fontSize: 11, fontWeight: 700, color: 'var(--ink-soft)' }}>
+                      {window.tasteInitials(name)}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: 'var(--ink)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                    <AxisBtn kind="primary" onClick={() => invite(f)}>{busy ? 'inviting…' : 'invite'}</AxisBtn>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* someone else wants me on THEIR walk — the popup's offer, kept where it can be found */}
+      {otherInvites.map(iv => (
+        <div key={iv.walk_id} style={{ marginTop: 12, padding: '12px 14px', borderRadius: 16,
+          border: `1.5px solid ${DS.alert}`, background: `color-mix(in srgb, ${DS.alert} 8%, var(--card))`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ flex: '1 1 150px', fontSize: 12.5, lineHeight: 1.4, color: 'var(--ink-soft)' }}>
+            <b style={{ color: 'var(--ink)' }}>{iv.host_name || 'A friend'}</b> wants you on their walk instead
+            {iv.member_count > 1 ? ` (${iv.member_count} people on it)` : ''} — joining leaves this one.
+          </span>
+          <AxisBtn kind="accept" onClick={() => switchTo(iv)}>Join theirs</AxisBtn>
+        </div>
+      ))}
 
       {invited && (
         <div style={{ marginTop: 16, padding: '13px 15px', borderRadius: 16,
