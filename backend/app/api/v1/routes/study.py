@@ -527,12 +527,14 @@ async def _walk_out(db: AsyncSession, walk_id: int, me: int) -> WalkOut:
     )
 
 
-async def _require_member(db: AsyncSession, walk_id: int, pid: int) -> None:
-    ok = (await db.execute(text("""
-        SELECT 1 FROM walk_member WHERE walk_id = :wid AND participant_id = :pid
+async def _require_member(db: AsyncSession, walk_id: int, pid: int) -> str:
+    """Confirm the asking participant is on this walk, and return their status."""
+    st = (await db.execute(text("""
+        SELECT status FROM walk_member WHERE walk_id = :wid AND participant_id = :pid
     """), {"wid": walk_id, "pid": pid})).scalar_one_or_none()
-    if not ok:
+    if st is None:
         raise HTTPException(status_code=403, detail="not a member of this walk")
+    return st
 
 
 async def _log_walk_event(
@@ -650,7 +652,11 @@ async def patch_walk_state(
     client last saw. A stale version returns 409 with the current walk attached, so the
     client can re-render from the truth instead of retrying blind."""
     pid = await _participant_of_session(db, session_id)
-    await _require_member(db, walk_id, pid)
+    # Being invited is not being in: someone who has not accepted must not be able to
+    # move the negotiation, or "the others have to accept" would only gate the taste
+    # merge and not the bargaining itself.
+    if await _require_member(db, walk_id, pid) != "accepted":
+        raise HTTPException(status_code=403, detail="accept the walk before changing the negotiation")
     row = (await db.execute(text("""
         SELECT state, version, status FROM walk WHERE id = :wid FOR UPDATE
     """), {"wid": walk_id})).mappings().one_or_none()

@@ -50,7 +50,7 @@ function AxisBtn({ children, onClick, kind, title }) {
 // One axis line. `axis` is a reconciled entry from window.reconcileGroupAxes: it
 // carries the per-person ranges, the effective (post-agreement) ranges, where the walk
 // lands, and what is currently proposed vs agreed.
-function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onAccept, onCounter, onClear }) {
+function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onMove, onAccept, onCounter, onClear }) {
   const t = React.useContext(ThemeCtx);
   const trackRef = React.useRef(null);
   const dragRef = React.useRef(null);                  // live value, readable mid-gesture
@@ -100,26 +100,43 @@ function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onAccept
     if (!canDrag) return;
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {}
     setAt(valueFromClient(e.clientX));
+    onMove(axis.id, valueFromClient(e.clientX));
   }
-  function move(e) { if (dragRef.current != null) setAt(valueFromClient(e.clientX)); }
+  function move(e) {
+    if (dragRef.current == null) return;
+    const v = valueFromClient(e.clientX);
+    setAt(v);
+    // Push WHILE dragging (throttled upstream) so the others watch the cursor travel
+    // rather than only learning where it stopped.
+    onMove(axis.id, v);
+  }
   function up() {
     const v = dragRef.current;
     if (v == null) return;
     dragRef.current = null;
     setDrag(null);
-    // Letting go IS the proposal — the spot you put the cursor on, offered by whoever
-    // currently holds the turn.
-    onPropose(axis.id, { how: 'point', value: v, by: pending ? pending.by : me, status: 'proposed' });
+    // Letting go turns the live move into the offer itself.
+    onPropose(axis.id, { how: 'point', value: v, by: me });
   }
+
+  // Everyone this offer still needs a yes from — only the people whose own zone excludes
+  // the spot, so an offer that lands where you already are asks you nothing.
+  const asks = axis.asks || [];
+  const iAmAsked = asks.indexOf(me) >= 0;
+  const waitingFor = asks.map(nameOf).join(' and ');
 
   // What the offer on the table says, in the group's words.
   function pendingLine() {
     const who = pending.by === me ? 'You' : nameOf(pending.by);
-    const asks = nameOf(axis.asks);
-    if (pending.how === 'drop') return `${who} suggest${who === 'You' ? '' : 's'} leaving this one out — waiting for ${asks}`;
-    if (pending.how === 'trade') return `Part of the trade — ${nameOf(pending.winner)} takes this one`;
-    if (pending.how === 'point') return `${who} propose${who === 'You' ? '' : 's'} this spot — waiting for ${asks}`;
-    return `${who} propose${who === 'You' ? '' : 's'} the middle — waiting for ${asks}`;
+    const verb = who === 'You' ? 'propose' : 'proposes';
+    if (axis.moving) {
+      return who === 'You' ? 'Moving it…' : `${who} is moving the cursor…`;
+    }
+    const tail = waitingFor ? ` — waiting for ${waitingFor}` : '';
+    if (pending.how === 'drop') return `${who} suggest${who === 'You' ? '' : 's'} leaving this one out${tail}`;
+    if (pending.how === 'trade') return `Part of the trade — ${nameOf(pending.winner)} takes this one${tail}`;
+    if (pending.how === 'point') return `${who} ${verb} this spot${tail}`;
+    return `${who} ${verb} the middle${tail}`;
   }
   function settledLine() {
     const how = axis.applied.how;
@@ -192,12 +209,16 @@ function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onAccept
           </span>
           <span style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
             {settled && <AxisBtn onClick={() => onClear(axis.id)}>✓ undo</AxisBtn>}
-            {pending && (
+            {/* While the cursor is under someone's finger there is nothing to accept
+                yet — the spot is still moving. */}
+            {pending && !axis.moving && (
               <React.Fragment>
-                <AxisBtn kind="accept" onClick={() => onAccept(axis.id)}
-                  title="Only the person being asked should tap this">{axis.asks === me ? 'You accept' : `${nameOf(axis.asks)} accepts`}</AxisBtn>
-                <AxisBtn onClick={() => onCounter(axis.id, axis.asks)}
-                  title="Hand the marker over so they can offer a different spot">Counter</AxisBtn>
+                {/* The accept button belongs to the people the offer asks something of,
+                    and to no one else. If I'm not one of them I have already got what I
+                    wanted here, so there is nothing for me to confirm. */}
+                {iAmAsked && <AxisBtn kind="accept" onClick={() => onAccept(axis.id)}>You accept</AxisBtn>}
+                <AxisBtn onClick={() => onCounter(axis.id, asks[0])}
+                  title="Hand the cursor over so they can put it somewhere else">Counter</AxisBtn>
               </React.Fragment>
             )}
             {!settled && !pending && (
@@ -206,7 +227,7 @@ function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onAccept
                  place neither of them asked for — so their offer is to leave the axis
                  out. With three or more, the zone the others already share IS the
                  majority's, so meeting in it leans toward where most of them are. */
-              <AxisBtn kind="primary" onClick={() => onPropose(axis.id, { how: pairMode ? 'drop' : 'middle', by: me, status: 'proposed' })}>
+              <AxisBtn kind="primary" onClick={() => onPropose(axis.id, { how: pairMode ? 'drop' : 'middle', by: me })}>
                 {pairMode ? 'Leave it out' : 'Meet in the middle'}
               </AxisBtn>
             )}
@@ -239,6 +260,26 @@ function GroupScreen({ go }) {
 
   const me = window.myMemberId();
   const gt = React.useMemo(() => window.groupTarget(), [rev]);      // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A friend has opened a walk and is waiting on me. My taste is already on the axes
+  // below (so the screen isn't a negotiation I'm absent from), but it is NOT on the walk
+  // until I join — so the others genuinely cannot see it yet, and I can't move the
+  // bargaining either. The banner says exactly that instead of leaving it ambiguous.
+  const walk = React.useMemo(
+    () => (window.StudyAPI && window.StudyAPI.currentWalk && window.StudyAPI.currentWalk()) || null,
+    [rev]);                                                          // eslint-disable-line react-hooks/exhaustive-deps
+  const myRow = walk && walk.members.find(m => String(m.participant_id) === me);
+  const invited = !!myRow && myRow.status === 'invited';
+  const hostRow = walk && walk.members.find(m => m.participant_id === walk.host_id);
+  const hostName = (hostRow && hostRow.display_name) || 'A friend';
+
+  async function joinWalk(accept) {
+    const S = window.StudyAPI;
+    if (!S || !S.answerWalk) return;
+    await S.answerWalk(accept, accept ? window.myWalkSnapshot() : null);
+    bump(x => x + 1);
+    if (S.logEvent) S.logEvent(accept ? 'walk_join' : 'walk_decline', { walk_id: walk && walk.walk_id });
+  }
   const soloOnly = !gt.group;                                        // nobody toggled to join yet
   // Walking solo there is no negotiation to report, but the header still shows who's
   // here — buildGroupMembers always yields at least me.
@@ -279,10 +320,14 @@ function GroupScreen({ go }) {
   }
   function accept(axisId) {
     const asked = (window.readSettlements()[axisId] || {});
-    window.agreeSettlement(axisId);
+    window.acceptSettlement(axisId, me);          // MY acceptance only
     bump(x => x + 1);
     if (window.StudyAPI) window.StudyAPI.logEvent('group_accept', { axis: axisId, how: asked.how, by: asked.by });
   }
+  // Dragging pushes the position out live (theme.jsx throttles it) and deliberately does
+  // NOT bump: my own cursor is already drawn from the local drag state, and re-rendering
+  // the whole screen on every frame of a drag would fight the gesture.
+  function moveCursor(axisId, value) { window.moveSettlement(axisId, value, me); }
   function counter(axisId, asks) {
     window.counterSettlement(axisId, asks);
     bump(x => x + 1);
@@ -322,6 +367,24 @@ function GroupScreen({ go }) {
         </div>
       </div>
 
+      {invited && (
+        <div style={{ marginTop: 16, padding: '13px 15px', borderRadius: 16,
+          border: `1.5px solid ${DS.alert}`, background: `color-mix(in srgb, ${DS.alert} 8%, var(--card))` }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 5 }}>
+            {hostName} started a walk with you
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--ink-soft)', marginBottom: 10 }}>
+            Your taste is on the axes below so you can see what this walk looks like — but
+            it isn't on the walk yet, so {hostName} can't see it, and you can't settle
+            anything until you join.
+          </div>
+          <div style={{ display: 'flex', gap: 7 }}>
+            <AxisBtn kind="accept" onClick={() => joinWalk(true)}>Join the walk</AxisBtn>
+            <AxisBtn onClick={() => joinWalk(false)}>Not now</AxisBtn>
+          </div>
+        </div>
+      )}
+
       {soloOnly ? (
         /* nobody toggled to join → send them to the profile to pick the crew */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14, padding: 24 }}>
@@ -356,7 +419,8 @@ function GroupScreen({ go }) {
 
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18, margin: '0 -2px', padding: '2px 2px 0' }}>
             {liveAxes.map((a) => <AxisRow key={a.id} axis={a} me={me} memberIds={memberIds} memberMap={memberMap}
-              pairMode={pairMode} onPropose={propose} onAccept={accept} onCounter={counter} onClear={clear} />)}
+              pairMode={pairMode} onPropose={propose} onMove={moveCursor}
+              onAccept={accept} onCounter={counter} onClear={clear} />)}
 
             {liveAxes.length === 0 && (
               <div style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>

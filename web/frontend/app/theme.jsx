@@ -495,27 +495,71 @@ function dealKeys(all, axis) {
 }
 function setSettlement(axis, s) {
   const all = readSettlements();
-  if (s) all[axis] = s; else delete all[axis];
-  return writeSettlements(all, { [axis]: s || null }, { action: s ? 'propose' : 'undo', axis });
+  // Proposing is accepting: the proposer is seeded into `accepts` so they never have to
+  // confirm their own offer, and a settlement that asks nobody is agreed the moment it
+  // is made.
+  const rec = s ? { ...s, moving: false, accepts: s.accepts || (s.by ? [s.by] : []) } : null;
+  if (rec) all[axis] = rec; else delete all[axis];
+  return writeSettlements(all, { [axis]: rec }, { action: rec ? 'propose' : 'undo', axis });
 }
-// Accept every axis in a deal at once — a trade is ONE bargain over two axes, so it
-// can't be half-accepted. Axes settled on their own carry no deal id and accept alone.
-function agreeSettlement(axis) {
+
+// Live cursor. While a finger is down the position is pushed to the others, throttled,
+// so they watch it move instead of only learning where it stopped. A move is not a new
+// offer, it is the same one at a new place — and it RESETS `accepts`, because consent
+// given to one spot is not consent to the next one. `moving` lets the other screens say
+// who is dragging rather than announcing an offer on every frame.
+const WALK_MOVE_MS = 250;
+let _moveAt = 0, _moveTimer = null, _movePending = null;
+function moveSettlement(axis, value, by) {
+  _movePending = { axis, value, by };
+  const send = () => {
+    const m = _movePending;
+    _movePending = null;
+    _moveAt = Date.now();
+    if (!m) return;
+    const all = readSettlements();
+    const rec = { ...(all[m.axis] || {}), how: 'point', value: m.value, by: m.by,
+      moving: true, accepts: m.by ? [m.by] : [] };
+    all[m.axis] = rec;
+    writeSettlements(all, { [m.axis]: rec }, { action: 'move', axis: m.axis });
+  };
+  const wait = WALK_MOVE_MS - (Date.now() - _moveAt);
+  if (wait <= 0) {
+    if (_moveTimer) { clearTimeout(_moveTimer); _moveTimer = null; }
+    send();
+    return;
+  }
+  if (!_moveTimer) _moveTimer = setTimeout(() => { _moveTimer = null; send(); }, wait);
+}
+
+// Record ONE person's acceptance. The settlement only becomes agreed once everyone it
+// asks has done this, so a three-way disagreement can't be closed by a single tap.
+// A trade is one bargain over two axes, so accepting it covers both.
+function acceptSettlement(axis, memberId) {
   const all = readSettlements();
   const keys = dealKeys(all, axis);
-  if (!keys.length) return all;
+  if (!keys.length || !memberId) return all;
   const patch = {};
-  keys.forEach(k => { all[k] = { ...all[k], status: 'agreed' }; patch[k] = all[k]; });
+  keys.forEach(k => {
+    const accepts = ((all[k] && all[k].accepts) || []).slice();
+    if (accepts.indexOf(memberId) < 0) accepts.push(memberId);
+    all[k] = { ...all[k], accepts, moving: false };
+    patch[k] = all[k];
+  });
   return writeSettlements(all, patch, { action: 'accept', axis });
 }
-// Hand the turn to the person being asked, keeping the value as the starting point
-// for their counter-offer.
+
+// Hand the offer over: the other person becomes the proposer, keeping the value as the
+// starting point for their counter. Their acceptance is implied, mine is not any more.
 function counterSettlement(axis, asks) {
   const all = readSettlements();
   const keys = dealKeys(all, axis);
   if (!keys.length || !asks) return all;
   const patch = {};
-  keys.forEach(k => { all[k] = { ...all[k], by: asks, status: 'proposed' }; patch[k] = all[k]; });
+  keys.forEach(k => {
+    all[k] = { ...all[k], by: asks, accepts: [asks], moving: false };
+    patch[k] = all[k];
+  });
   return writeSettlements(all, patch, { action: 'counter', axis });
 }
 function clearSettlement(axis) {
@@ -561,20 +605,46 @@ function applySettlement(s, ranges, base, ids) {
   return { eff, band, center: s.how === 'point' ? meet : (band[0] + band[1]) / 2, idle: false };
 }
 
-// Who has to agree to this settlement: the person it asks the most of. For a trade
-// that's the other winner — they're the one handing this axis over. Otherwise it's
-// whoever's own zone sits furthest from where the settlement lands. Never the person
-// who proposed it, and never nobody: with a pair it's always the other one.
-function settlementAsks(s, ranges, ids, center) {
-  if (s.how === 'trade' && s.other) return s.other;
-  const pool = ids.filter(id => id !== s.by);
-  if (!pool.length) return null;
-  const at = center == null ? 0.5 : center;
-  const dist = id => {
+// Where a settlement puts the walk on this axis, in slider space. Null for a 'drop',
+// which takes the axis off the walk entirely rather than moving it somewhere.
+function settlementLanding(s, ranges, base) {
+  if (!s || s.how === 'drop') return null;
+  if (s.how === 'trade') {
+    const w = ranges[s.winner] || [0, 1];
+    return (w[0] + w[1]) / 2;
+  }
+  return clamp(s.how === 'point' && s.value != null ? s.value : base.meet, 0, 1);
+}
+
+// Who still has to say yes — and ONLY the people this settlement actually asks
+// something of. On a spot or a middle that means whoever's own comfortable zone does
+// not contain it: someone already inside the zone is being asked to concede nothing,
+// so making them confirm would be theatre. Move the cursor into everyone's overlap and
+// the list is empty, which settles it on the spot.
+// The proposer is never on the list: offering something is accepting it.
+function settlementNeeds(s, ranges, ids, landing) {
+  if (!s) return [];
+  if (s.how === 'trade') return s.other && s.other !== s.by ? [s.other] : [];
+  // Leaving the axis out takes it away from everyone who declared anything on it.
+  if (s.how === 'drop') {
+    return ids.filter(id => id !== s.by && !(ranges[id][0] <= 0 && ranges[id][1] >= 1));
+  }
+  if (landing == null) return [];
+  return ids.filter(id => {
+    if (id === s.by) return false;
     const r = ranges[id] || [0, 1];
-    return r[0] > at ? r[0] - at : r[1] < at ? at - r[1] : 0;
-  };
-  return pool.reduce((f, id) => (dist(id) > dist(f) ? id : f), pool[0]);
+    return landing < r[0] || landing > r[1];
+  });
+}
+
+// Agreed once every person it asks has accepted — so a three-way disagreement can't be
+// closed by one person tapping, and one that asks nobody needs no tap at all.
+// `accepts` absent means a record written before per-person acceptance existed.
+function settlementAgreed(s, needed) {
+  if (!s) return false;
+  if (s.moving) return false;                     // still under someone's finger
+  if (!s.accepts) return s.status === 'agreed';
+  return (needed || []).every(id => s.accepts.indexOf(id) >= 0);
 }
 
 // Pair two open disagreements so each side wins one OUTRIGHT, instead of both living
@@ -636,19 +706,29 @@ function buildGroupMembers(userVec) {
   const myName = (S.currentDisplayName && S.currentDisplayName()) || 'You';
   const myId = myMemberId();
   const walk = S.currentWalk && S.currentWalk();
-  const accepted = walk && walk.members ? walk.members.filter(m => m.status === 'accepted') : [];
+  const rows = (walk && walk.members) || [];
+  const accepted = rows.filter(m => m.status === 'accepted');
+  const myRow = rows.find(m => String(m.participant_id) === myId);
+  const iAmInvited = !!myRow && myRow.status === 'invited';
 
   if (accepted.length) {
+    // A friend has opened a walk and I have not answered yet. Put me on the axes ANYWAY,
+    // with my live taste, so the screen shows what this walk looks like with me in it —
+    // otherwise being invited means watching a negotiation I am absent from. My vector is
+    // not on the walk until I accept, so the other phones genuinely do not have it yet:
+    // `pendingJoin` marks that, and the screen says so rather than implying I'm in.
+    const list = iAmInvited ? accepted.concat([myRow]) : accepted;
     let f = 0;
-    return accepted.map(m => {
+    return list.map(m => {
       const id = String(m.participant_id);
       const isMe = id === myId;
       const name = isMe ? myName : (m.display_name || 'friend');
       return {
         id, name, init: tasteInitials(name), isMe,
+        pendingJoin: isMe && iAmInvited,
         hue: isMe ? PERSON_HUES.me : PERSON_HUES.friends[(f++) % PERSON_HUES.friends.length],
-        vec: m.vector || (isMe ? (userVec || readUserTasteVector()) : {}),
-        levels: m.levels || levelsFromVector(m.vector),
+        vec: (isMe && iAmInvited) ? (userVec || readUserTasteVector()) : (m.vector || (isMe ? (userVec || readUserTasteVector()) : {})),
+        levels: (isMe && iAmInvited) ? readAxisLevels() : (m.levels || levelsFromVector(m.vector)),
       };
     });
   }
@@ -686,8 +766,13 @@ function reconcileGroupAxes(userVec, membersOverride) {
     const base = mergeAxisRanges(ranges, ids);
     const conflict = base.kind !== 'common';
     const s = conflict ? settlements[key] : null;
-    const applied = s && s.status === 'agreed' ? s : null;
-    const pending = s && s.status === 'proposed' ? s : null;
+    // Whether it is agreed is DERIVED from who has accepted, not stored: one source of
+    // truth, so a settlement can never claim agreement it hasn't collected.
+    const landing = settlementLanding(s, ranges, base);
+    const needs = settlementNeeds(s, ranges, ids, landing);
+    const agreed = settlementAgreed(s, needs);
+    const applied = agreed ? s : null;
+    const pending = s && !agreed ? s : null;
 
     const out = applied ? applySettlement(applied, ranges, base, ids)
       : { eff: ranges, band: base.band, center: base.band ? (base.band[0] + base.band[1]) / 2 : base.meet, idle: false };
@@ -697,23 +782,19 @@ function reconcileGroupAxes(userVec, membersOverride) {
     // become "we all want the exact middle".
     const noneDeclared = ids.every(id => ranges[id][0] <= 0 && ranges[id][1] >= 1);
 
-    // Where a pending offer WOULD land, purely so the marker can be drawn there.
-    const previewAt = pending
-      ? clamp(pending.how === 'point' && pending.value != null ? pending.value
-        : pending.how === 'trade' ? (ranges[pending.winner][0] + ranges[pending.winner][1]) / 2
-          : base.meet, 0, 1)
-      : null;
-    const live = pending || applied;
     return {
       id: key, left, right, ranges, eff: out.eff,
       kind: base.kind, conflict, idle: noneDeclared || out.idle,
       band: out.band, center: out.center,
       outlier: base.outlier || null, side: base.side || null,
       meet: base.meet != null ? base.meet : null,
-      applied, pending, previewAt,
-      // whose turn it is to move the marker, and who owes an answer
-      turn: live ? live.by : null,
-      asks: live ? settlementAsks(live, ranges, ids, pending ? previewAt : out.center) : null,
+      applied, pending,
+      previewAt: pending ? landing : null,   // where to draw the cursor for a live offer
+      turn: s ? s.by : null,                 // whose finger the cursor is under
+      moving: !!(s && s.moving),             // someone is dragging it right now
+      // everyone this settlement still needs a yes from, and whether it needs any
+      asks: needs,
+      accepts: (s && s.accepts) || [],
     };
   });
   return { members, ids, byId, axes, settlements };
@@ -1036,9 +1117,10 @@ Object.assign(window, {
   mergeTasteVectors, groupTasteChips,
   PREF_LEVELS, BAND_PREF, readAxisLevels, axisLevel, setAxisLevel,
   PERSON_HUES, tasteInitials, axisBand, axisIntersect, mergeAxisRanges,
-  readSettlements, setSettlement, agreeSettlement, counterSettlement,
-  clearSettlement, clearGroupSettlements, defaultHow, applySettlement,
-  settlementAsks, proposeTrade, myMemberId, levelsFromVector, myWalkSnapshot,
+  readSettlements, setSettlement, acceptSettlement, counterSettlement,
+  moveSettlement, clearSettlement, clearGroupSettlements, defaultHow, applySettlement,
+  settlementLanding, settlementNeeds, settlementAgreed,
+  proposeTrade, myMemberId, levelsFromVector, myWalkSnapshot,
   buildGroupMembers, reconcileGroupAxes, groupTarget,
   loadVibeStreets, recommendForVector, useRecommendations,
   cardById, readPairOverride, resolveSwipePairs,

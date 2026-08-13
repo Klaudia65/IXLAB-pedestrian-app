@@ -138,6 +138,22 @@ function FriendToasts() {
       const added = (e.detail && e.detail.added) || [];
       added.forEach(f => push({ kind: 'add', name: f.display_name || f.friend_code || 'A friend' }, 4800));
     }
+    function onWalk(e) {
+      const w = e.detail && e.detail.walk;
+      const prev = e.detail && e.detail.previous;
+      if (!w) return;
+      const S = window.StudyAPI || {};
+      const mine = S.myParticipantId && S.myParticipantId();
+      if (w.host_id === mine) return;                      // I opened it; I know
+      const myRow = (w.members || []).find(m => m.participant_id === mine);
+      // Announce a walk once, when it first shows up. Later polls change the version,
+      // not the invitation, and re-toasting every 2.5 s would be unusable.
+      if (!prev || prev.walk_id !== w.walk_id) {
+        const host = (w.members || []).find(m => m.participant_id === w.host_id);
+        push({ kind: 'walk', name: (host && host.display_name) || 'A friend',
+          joined: myRow && myRow.status === 'accepted' }, 7000);
+      }
+    }
     function onFriendSearch(e) {
       const searches = (e.detail && e.detail.searches) || [];
       // Only nudge for friends currently toggled onto this walk.
@@ -150,9 +166,11 @@ function FriendToasts() {
     }
     window.addEventListener('seoulwalk:friends', onFriends);
     window.addEventListener('seoulwalk:friendsearch', onFriendSearch);
+    window.addEventListener('seoulwalk:walk', onWalk);
     return () => {
       window.removeEventListener('seoulwalk:friends', onFriends);
       window.removeEventListener('seoulwalk:friendsearch', onFriendSearch);
+      window.removeEventListener('seoulwalk:walk', onWalk);
     };
   }, []);
   if (!toasts.length) return null;
@@ -166,12 +184,14 @@ function FriendToasts() {
           boxShadow: '0 10px 34px rgba(0,0,0,0.30)', animation: 'ftIn .32s cubic-bezier(.22,1,.36,1)' }}>
           <span style={{ width: 28, height: 28, borderRadius: 999, flex: '0 0 auto', background: 'var(--accent)', color: '#fff',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.fontMono, fontSize: 11, fontWeight: 700 }}>
-            {ft.kind === 'search' ? '🔎' : String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
+            {ft.kind === 'search' ? '🔎' : ft.kind === 'walk' ? '🚶' : String(ft.name).replace(/\s+/g, '').slice(0, 2).toUpperCase()}
           </span>
           <span style={{ fontFamily: t.fontUI, fontSize: 13.5, fontWeight: 600 }}>
             {ft.kind === 'search'
               ? <span><b>{ft.name}</b> keeps looking for <b>{ft.query}</b> — go together?</span>
-              : <span><b>{ft.name}</b> added you as a friend</span>}
+              : ft.kind === 'walk'
+                ? <span><b>{ft.name}</b> started a walk with you{ft.joined ? '' : ' — open Group · axes to join'}</span>
+                : <span><b>{ft.name}</b> added you as a friend</span>}
           </span>
         </div>
       ))}
@@ -243,6 +263,29 @@ function App() {
       if (window.StudyAPI.stopWalkPolling) window.StudyAPI.stopWalkPolling();
     };
   }, [sessionReady]);
+
+  // A friend starting a walk with me has to SHOW UP. The negotiation is the thing we're
+  // doing together, and it is useless if it only appears when I happen to open the right
+  // screen — so the first time a walk I didn't open myself arrives, jump to the group
+  // axes. Keyed on the walk id and remembered across reloads, so later version bumps
+  // refresh that screen (group.jsx listens for the same event) without yanking me off
+  // the map every 2.5 seconds, and a reload doesn't drag me back here.
+  React.useEffect(() => {
+    if (!sessionReady) return;
+    function onWalk(e) {
+      const w = e.detail && e.detail.walk;
+      if (!w) return;
+      const S = window.StudyAPI || {};
+      if (w.host_id === (S.myParticipantId && S.myParticipantId())) return;
+      let seen = null;
+      try { seen = JSON.parse(localStorage.getItem('seoulwalk.walk.announced') || 'null'); } catch (x) {}
+      if (seen === w.walk_id) return;
+      try { localStorage.setItem('seoulwalk.walk.announced', JSON.stringify(w.walk_id)); } catch (x) {}
+      setScreen('group');
+    }
+    window.addEventListener('seoulwalk:walk', onWalk);
+    return () => window.removeEventListener('seoulwalk:walk', onWalk);
+  }, [sessionReady]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // GPS watch + trace upload for the whole session — see the notes above. Gated on
   // the session so the permission prompt lands after the consent screen, not before.

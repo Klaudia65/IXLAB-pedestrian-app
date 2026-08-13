@@ -253,6 +253,9 @@
         localStorage.setItem('seoulwalk.group.settle', JSON.stringify(walkCache.state));
       }
     } catch (e) {}
+    // Someone is dragging a cursor: run the loop fast for a moment so their movement
+    // arrives as movement rather than as a jump.
+    if (walkIsMoving(walkCache)) walkFastUntil = Date.now() + WALK_LIVE_FOR;
     var changed = !prev !== !walkCache
       || (prev && walkCache && (prev.version !== walkCache.version
         || prev.status !== walkCache.status
@@ -318,13 +321,45 @@
     });
   }
 
+  // Adaptive cadence. A negotiation sitting still needs a slow heartbeat, but a cursor
+  // being DRAGGED on the other phone has to arrive while it is still moving — at 2.5 s
+  // "live" would read as a slideshow. So whenever a poll brings back a settlement someone
+  // has their finger on, the loop speeds up for a couple of seconds and then settles
+  // back. Self-scheduling rather than setInterval, because the delay changes.
+  var WALK_POLL_IDLE = 2500, WALK_POLL_LIVE = 600, WALK_LIVE_FOR = 2500;
+  var walkIdleMs = WALK_POLL_IDLE, walkFastUntil = 0;
+  var walkInFlight = false, walkLastAt = 0;
+
+  function walkIsMoving(w) {
+    if (!w || !w.state) return false;
+    return Object.keys(w.state).some(function (k) { return w.state[k] && w.state[k].moving; });
+  }
+
+  // A fixed heartbeat that decides on each beat whether it is time to fetch. The
+  // obvious shape -- chain the next timer off the previous response -- dies for good the
+  // moment one request hangs, and a phone whose tab gets backgrounded does exactly that:
+  // the fetch is parked, nothing re-arms, and the negotiation silently stops updating
+  // until something else pokes the page. Here the ticker is independent of the network,
+  // and `walkInFlight` is what prevents pile-ups.
+  function walkPollTick() {
+    var due = Date.now() < walkFastUntil ? WALK_POLL_LIVE : walkIdleMs;
+    if (walkInFlight || Date.now() - walkLastAt < due) return;
+    walkInFlight = true;
+    walkLastAt = Date.now();
+    refreshWalk().then(walkPollDone, walkPollDone);
+  }
+  function walkPollDone() { walkInFlight = false; }
+
   function startWalkPolling(ms) {
     stopWalkPolling();
-    refreshWalk();
-    walkPollTimer = setInterval(refreshWalk, ms || 2500);
+    walkIdleMs = ms || WALK_POLL_IDLE;
+    walkLastAt = 0;
+    walkPollTick();                                   // first sync straight away
+    walkPollTimer = setInterval(walkPollTick, WALK_POLL_LIVE);
   }
   function stopWalkPolling() {
     if (walkPollTimer) { clearInterval(walkPollTimer); walkPollTimer = null; }
+    walkInFlight = false;
   }
 
   function startFriendPolling(ms) {
