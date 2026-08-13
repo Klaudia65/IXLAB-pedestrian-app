@@ -347,9 +347,10 @@ function GroupScreen({ go }) {
   const waitingAxes = liveAxes.filter(a => a.pending);
   const unresolved = openAxes.length + waitingAxes.length;
 
-  // Real streets ranked for the group's agreed target — the SAME value the map ranks
-  // on, so this list and the map can't tell different stories.
-  const recs = useRecommendations(gt.target, 6);
+  // No street list here on purpose. This screen is the negotiation; ranking streets
+  // while the group is still bargaining answers a question nobody has asked yet, and it
+  // showed a top-6 that changed under every tap. The streets AND the walks that join
+  // them are computed once, when 'Find our spot' is pressed — see findOurSpot below.
 
   // A trade needs two disagreements still on the table.
   const trade = React.useMemo(
@@ -387,6 +388,23 @@ function GroupScreen({ go }) {
     bump(x => x + 1);
     if (window.StudyAPI) window.StudyAPI.logEvent('group_unsettle', { axis: axisId });
   }
+  // 'Find our spot' — the one moment anything is computed from the negotiation. It hands
+  // the map an INTENT rather than a result: the map owns the street scores, the walk
+  // network and the departure node, so it re-reads groupTarget() itself and there is no
+  // second, staler copy of the group's target travelling between screens. A plain window
+  // global (not localStorage) on purpose — the intent must die with a page reload, or
+  // reopening the app on the map screen would rebuild walks nobody asked for.
+  function findOurSpot() {
+    window.SeoulMapIntent = { kind: 'group-walk', at: Date.now() };
+    if (window.StudyAPI && window.StudyAPI.logEvent) {
+      window.StudyAPI.logEvent('group_find_spot', {
+        walk_id: (window.StudyAPI.currentWalkId && window.StudyAPI.currentWalkId()) || null,
+        members: memberIds.length, unresolved,
+      });
+    }
+    go('map2');
+  }
+
   function offerTrade() {
     if (!trade) return;
     const deal = 'd' + trade[0].axis + '_' + trade[1].axis;
@@ -588,27 +606,6 @@ function GroupScreen({ go }) {
               </span>
             </div>
 
-            {/* streets ranked for the group's agreed target */}
-            <div style={{ paddingTop: 6 }}>
-              <Label style={{ marginBottom: 10 }}>Streets for the group</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {recs.length === 0 ? (
-                  <div style={{ fontSize: 13, color: 'var(--ink-faint)' }}>Finding streets…</div>
-                ) : recs.map((s, i) => (
-                  <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px',
-                    background: i === 0 ? 'var(--card-2)' : 'var(--card)', border: '1px solid var(--line)', borderRadius: t.radiusSm }}>
-                    <div style={{ fontFamily: t.fontMono, fontSize: 12, fontWeight: 700, color: 'var(--ink-faint)', width: 16, flex: '0 0 auto', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--ink-soft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.sub}</div>
-                    </div>
-                    <div style={{ width: 46, height: 5, borderRadius: 999, background: 'var(--line)', overflow: 'hidden', flex: '0 0 auto' }}>
-                      <div style={{ width: `${Math.round((s.score || 0) * 100)}%`, height: '100%', background: DS.solo, borderRadius: 999 }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           <div style={{ paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -617,7 +614,7 @@ function GroupScreen({ go }) {
                 Leaves {unresolved} disagreement{unresolved > 1 ? 's' : ''} unsettled · you can come back and settle {unresolved > 1 ? 'them' : 'it'} while walking
               </span>
             )}
-            <PrimaryBtn onClick={() => go('map2')}>{unresolved === 0 ? 'Find our spot' : 'Find our spot anyway'}</PrimaryBtn>
+            <PrimaryBtn onClick={findOurSpot}>{unresolved === 0 ? 'Find our spot' : 'Find our spot anyway'}</PrimaryBtn>
           </div>
         </React.Fragment>
       )}

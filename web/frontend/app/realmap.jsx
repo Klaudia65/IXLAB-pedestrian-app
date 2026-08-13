@@ -1994,13 +1994,16 @@ function RealMapScreen() {
   // From the vibe street list the user is looking at, propose a few DISTINCT
   // ~38-min walks that string those very streets together from the fake-GPS start.
   // The user then picks the option they like.
-  function proposeWalks() {
+  function proposeWalks() { return proposeWalksFrom(routeTargetRef.current, vibeStreets); }
+
+  // Same thing with the two inputs passed in, for a caller that has just ranked the
+  // streets itself and cannot wait a render for the state to land (the group intent).
+  function proposeWalksFrom(target, streets, label) {
     const net = netRef.current, idx = routeIdxRef.current, start = startNodeRef.current;
-    if (!net || idx == null || start == null) { setStatus('Walk network still loading…'); return; }
-    const target = routeTargetRef.current, streets = vibeStreets;
-    if (!target || !streets || !streets.length) { setStatus('Set a vibe first.'); return; }
+    if (!net || idx == null || start == null) { setStatus('Walk network still loading…'); return false; }
+    if (!target || !streets || !streets.length) { setStatus('Set a vibe first.'); return false; }
     const prizeIds = nameIdSet(idx, streets.map(s => s.name));
-    if (!prizeIds.size) { setStatus('These streets aren’t on the walk network yet.'); return; }
+    if (!prizeIds.size) { setStatus('These streets aren’t on the walk network yet.'); return false; }
     // Park mode: also feed the park-walk edges as prizes so the route dips into a
     // park, not just the vibe streets. Memoised — the set doesn't depend on the vibe.
     let parkEdges = null;
@@ -2012,10 +2015,11 @@ function RealMapScreen() {
       parkEdges = parkEdgesRef.current;
     }
     const opts = makeWalkOptions(net, idx, target, start, WALK_BUDGET_M, prizeIds, parkEdges);
-    if (!opts.length) { setStatus('Couldn’t build a walk from here.'); return; }
-    setWalkOptions(opts); setKind('walk-options'); setTitle('Walks joining your streets');
+    if (!opts.length) { setStatus('Couldn’t build a walk from here.'); return false; }
+    setWalkOptions(opts); setKind('walk-options'); setTitle(label || 'Walks joining your streets');
     setSelected(null); setSheetOpen(true); setStatus('');
     clearHighlights();                       // hide the street highlight while choosing
+    return true;
   }
   // Draw a chosen option and present it as a départ→…→arrivée SEQUENCE. The map
   // gets the segmented route (drawRoute); the sheet gets the marquee anticipation
@@ -2090,6 +2094,9 @@ function RealMapScreen() {
     setVibeStreets(streets); setWalkOptions(null);
     if (wantPark && walks.length) showBoth(streets, walks, fit, pad); else showStreets(streets, fit, pad);
     setStatus(list.length ? '' : 'No vibe scores loaded for these streets yet.');
+    // Handed back so a caller can chain straight into proposeWalksFrom: `vibeStreets` is
+    // React state and is not readable in the same tick we just set it.
+    return streets;
   }
   // The "✦ My vibe" chip: rank from the persisted sliders AND reveal the compact
   // in-map sliders. Collapse the results sheet so the map stays visible between the
@@ -2106,6 +2113,54 @@ function RealMapScreen() {
     const g = mergeTargetWithGroup(targetFromSliders(vals, off, greenMode));
     runVibeWithTarget(g.target, false, undefined, g.group);
   }
+  // ---- arriving from 'Find our spot' (group.jsx) ----------------------------------
+  // The group screen computes nothing itself: it sets window.SeoulMapIntent and comes
+  // here. This is where the negotiation finally becomes geography — rank the streets on
+  // the agreed target, then build the walks that join them, in one go.
+  //
+  // Everything that computation needs arrives asynchronously (the vibe scores, the
+  // routing graph, the departure node), so readiness is polled rather than assumed, in
+  // two stages: the ranking goes up as soon as the scores are there — no reason to stare
+  // at an empty map while a 6 MB graph downloads — and the walks follow when the graph
+  // lands. The intent is consumed immediately, so this can never run twice.
+  React.useEffect(() => {
+    const intent = window.SeoulMapIntent;
+    if (!intent || intent.kind !== 'group-walk') return;
+    window.SeoulMapIntent = null;
+    let ranked = null;
+    const attempt = () => {
+      if (!ranked) {
+        if (!vibeFeats.current || !vibeFeats.current.length) return false;
+        greenModeRef.current = readGreenMode();
+        const g = mergeTargetWithGroup(readVibeTarget());
+        // Nothing declared by anyone → there is no target to rank on, and the honest
+        // answer is to say so rather than to draw a walk built on nothing.
+        if (!Object.keys(g.target).length) { setStatus('No one on this walk has declared a preference yet.'); return true; }
+        // On a shared walk the in-map sliders don't steer the ranking (the target moves by
+        // agreement), so they stay shut — visible sliders that do nothing would lie.
+        if (g.group) setShowSliders(false);
+        const streets = runVibeWithTarget(g.target, true, undefined, g.group);
+        if (!streets || !streets.length) return true;             // nothing to join
+        ranked = {
+          target: g.target, streets: streets,
+          label: g.group ? 'Walks joining our streets' : null,
+        };
+      }
+      if (!netRef.current || routeIdxRef.current == null || startNodeRef.current == null) return false;
+      return proposeWalksFrom(ranked.target, ranked.streets, ranked.label) !== false;
+    };
+    if (attempt()) return;
+    setStatus('Building our walk…');
+    let tries = 0;
+    const timer = setInterval(() => {
+      if (attempt() || ++tries > 40) {            // ~12 s, then leave the ranking standing
+        clearInterval(timer);
+        if (tries > 40) setStatus('Walk network still loading — tap “Make a walk with these streets”.');
+      }
+    }, 300);
+    return () => clearInterval(timer);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // preset vibe chips — a fixed target instead of the live sliders.
   function runPreset(p) {
     setQuery(''); setShowSliders(false);
