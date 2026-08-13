@@ -224,6 +224,109 @@
       .catch(function (e) { console.warn('[StudyAPI] refreshFriendFavorites failed', e); return friendFavsCache; });
   }
 
+  // --- shared walk (friends mode) -------------------------------------------
+  // The negotiation is one jsonb document on the server plus a `version` counter.
+  // Every phone polls GET /walks/current; when the version has moved we mirror the
+  // document into localStorage (where the synchronous group-taste code reads it) and
+  // fire 'seoulwalk:walk' so any mounted screen re-renders. Writes go out as patches
+  // carrying the version we last saw, so two phones editing at once is detected.
+  var WALK_KEY = 'seoulwalk.walk.current';
+  var walkCache = (function () {
+    try { return JSON.parse(localStorage.getItem(WALK_KEY) || 'null'); } catch (e) { return null; }
+  })();
+  var walkPollTimer = null;
+
+  function myParticipantId() { return session && session.participant_id; }
+  function currentWalk() { return walkCache; }
+  function currentWalkId() { return walkCache && walkCache.walk_id; }
+
+  // Publish a freshly-read walk. The negotiation document is copied into the same
+  // localStorage key the group screen and the map already read (group.settle), so the
+  // synchronous window.groupTarget() path needs no rewrite to become multi-device.
+  function emitWalk(walk) {
+    var prev = walkCache;
+    walkCache = walk || null;
+    try {
+      if (walkCache) localStorage.setItem(WALK_KEY, JSON.stringify(walkCache));
+      else localStorage.removeItem(WALK_KEY);
+      if (walkCache && walkCache.state) {
+        localStorage.setItem('seoulwalk.group.settle', JSON.stringify(walkCache.state));
+      }
+    } catch (e) {}
+    var changed = !prev !== !walkCache
+      || (prev && walkCache && (prev.version !== walkCache.version
+        || prev.status !== walkCache.status
+        || JSON.stringify(prev.members) !== JSON.stringify(walkCache.members)));
+    if (changed) {
+      try { window.dispatchEvent(new CustomEvent('seoulwalk:walk', { detail: { walk: walkCache, previous: prev } })); } catch (e) {}
+    }
+    return walkCache;
+  }
+
+  function refreshWalk() {
+    if (!sid()) return Promise.resolve(null);
+    return fetch(BASE_URL + '/sessions/' + sid() + '/walks/current', { headers: headers() })
+      .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
+      .then(function (r) { return emitWalk(r && r.walk); })
+      .catch(function (e) { console.warn('[StudyAPI] refreshWalk failed', e); return walkCache; });
+  }
+
+  // Open a walk and invite friends. `snapshot` is { vector, levels } — the host's
+  // taste frozen at this moment, which is what the negotiation runs on.
+  function createWalk(inviteIds, snapshot) {
+    snapshot = snapshot || {};
+    return scoped('/walks', {
+      invite: (inviteIds || []).map(Number),
+      vector: snapshot.vector || null, levels: snapshot.levels || null
+    }).then(function (w) { return w && w.walk_id ? emitWalk(w) : null; });
+  }
+
+  function answerWalk(accept, snapshot) {
+    var wid = currentWalkId();
+    if (!wid) return Promise.resolve(null);
+    snapshot = snapshot || {};
+    return scoped('/walks/' + wid + '/answer', {
+      accept: !!accept, vector: snapshot.vector || null, levels: snapshot.levels || null
+    }).then(function (w) { return w && w.walk_id ? emitWalk(w) : null; });
+  }
+
+  function setWalkStatus(status) {
+    var wid = currentWalkId();
+    if (!wid) return Promise.resolve(null);
+    return scoped('/walks/' + wid + '/status', { status: status })
+      .then(function (w) { return w && w.walk_id ? emitWalk(w) : null; });
+  }
+
+  // Push a change to the negotiation: { axis: settlement } to set, { axis: null } to
+  // clear. On a version conflict the server hands back the current walk, which we
+  // adopt — the other phone got there first, and re-rendering from the truth beats
+  // retrying a patch built on a stale view.
+  function patchWalkState(patch, meta) {
+    var wid = currentWalkId();
+    if (!wid) return Promise.resolve(null);
+    meta = meta || {};
+    var base = walkCache ? walkCache.version : null;
+    return scoped('/walks/' + wid + '/state', {
+      patch: patch, base_version: base, action: meta.action || null, axis: meta.axis || null
+    }).then(function (res) {
+      if (!res) return null;
+      if (res.conflict && res.walk) return emitWalk(res.walk);
+      if (res.version != null && walkCache) {
+        emitWalk(Object.assign({}, walkCache, { version: res.version, state: res.state || {} }));
+      }
+      return walkCache;
+    });
+  }
+
+  function startWalkPolling(ms) {
+    stopWalkPolling();
+    refreshWalk();
+    walkPollTimer = setInterval(refreshWalk, ms || 2500);
+  }
+  function stopWalkPolling() {
+    if (walkPollTimer) { clearInterval(walkPollTimer); walkPollTimer = null; }
+  }
+
   function startFriendPolling(ms) {
     stopFriendPolling();
     refreshFriends();                                  // immediate first sync
@@ -337,6 +440,11 @@
     hasSession: hasSession, currentCode: currentCode,
     currentDisplayName: currentDisplayName, renameDisplayName: renameDisplayName,
     myFriendCode: myFriendCode, addFriend: addFriend, myFriends: myFriends,
+    myParticipantId: myParticipantId,
+    currentWalk: currentWalk, currentWalkId: currentWalkId, refreshWalk: refreshWalk,
+    createWalk: createWalk, answerWalk: answerWalk, setWalkStatus: setWalkStatus,
+    patchWalkState: patchWalkState,
+    startWalkPolling: startWalkPolling, stopWalkPolling: stopWalkPolling,
     refreshFriends: refreshFriends, refreshFriendActivity: refreshFriendActivity,
     startFriendPolling: startFriendPolling, stopFriendPolling: stopFriendPolling,
     shareFavorite: shareFavorite, unshareFavorite: unshareFavorite,

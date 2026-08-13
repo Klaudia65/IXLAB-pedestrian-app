@@ -214,18 +214,101 @@ function rehydrateProfileFromVector(vector) {
 // ======== GROUP TASTE MERGE ================================================
 // When friends join a walk we blend everyone's taste into one vibe target.
 
-// The user's own taste as an axis vector in [-1,+1], derived from the live slider
+// tiny persisted-state helpers, shared by everything below
+function swRead(key, dflt) {
+  try { const v = localStorage.getItem('seoulwalk.' + key); return v != null ? JSON.parse(v) : dflt; }
+  catch (e) { return dflt; }
+}
+function swWrite(key, val) {
+  try { localStorage.setItem('seoulwalk.' + key, JSON.stringify(val)); } catch (e) {}
+}
+
+// ---- declared preference LEVELS --------------------------------------------
+// Two levels per axis. The tolerance band a person brings to the group negotiation
+// follows from the level they DECLARED, rather than being applied blindly:
+//   'off'  — "doesn't matter to me" → full-width band: never blocks, never the outlier
+//   'pref' — "I have a preference"  → ±BAND_PREF, can bend to meet the group
+// Indifference is stored in the SLIDERS screen's existing drop list (sliders.off,
+// keyed by slider id) instead of a new key, so the two screens can never disagree
+// about which dimensions count. The legacy profile.prefs chip map is still read as
+// a source of 'off' so accounts that toggled chips before this existed keep them.
+//
+// A third level ('non-negotiable', a deliberately narrow band that refuses to bend)
+// was built and then dropped: one more thing to teach a participant mid-study, for a
+// mechanism the group screen can already express through a plain conflict. Restoring
+// it means widening PREF_LEVELS and giving axisBand a narrower width for it — the
+// rest of the chain reads whatever level it is handed.
+const BAND_PREF = 0.14;
+const PREF_LEVELS = ['pref', 'off'];    // the order a tap cycles through
+
+// Slider ids the walker dropped, folding in the legacy profile.prefs toggles
+// (keyed by axis, false = dropped).
+function readSlidersOff() {
+  const off = (swRead('sliders.off', []) || []).slice();
+  const legacy = swRead('profile.prefs', {}) || {};
+  Object.keys(legacy).forEach(k => {
+    if (legacy[k] !== false) return;
+    const sid = AXIS_TO_SLIDER[k];
+    if (sid && off.indexOf(sid) < 0) off.push(sid);
+  });
+  return off;
+}
+
+// The level declared for one axis. `off` can be passed in to avoid re-reading
+// localStorage once per axis.
+function axisLevel(axis, off) {
+  off = off || readSlidersOff();
+  const sid = AXIS_TO_SLIDER[axis];
+  return (sid && off.indexOf(sid) >= 0) ? 'off' : 'pref';
+}
+
+// Every axis with its declared level. An axis with no reading at all still gets
+// one: the level says "does this count for me", not "how strongly do I lean".
+function readAxisLevels() {
+  const off = readSlidersOff(), out = {};
+  (SWIPE_AXES || []).forEach(([k]) => { out[k] = axisLevel(k, off); });
+  return out;
+}
+
+// Declare a level for one axis. Writes through to the same keys the sliders screen
+// reads, retires any stale legacy chip toggle for that axis (otherwise it would
+// keep forcing 'off'), and fires 'seoulwalk:prefs' so mounted screens re-read.
+function setAxisLevel(axis, level) {
+  const sid = AXIS_TO_SLIDER[axis];
+  const off = (swRead('sliders.off', []) || []).filter(x => x !== sid);
+  if (level === 'off' && sid) off.push(sid);
+  swWrite('sliders.off', off);
+  const legacy = swRead('profile.prefs', null);
+  if (legacy && axis in legacy) { delete legacy[axis]; swWrite('profile.prefs', legacy); }
+  try { window.dispatchEvent(new CustomEvent('seoulwalk:prefs', { detail: { axis, level } })); } catch (e) {}
+  return level;
+}
+
+// The walker's taste as an axis vector in [-1,+1], derived from the live slider
 // positions (so it tracks manual tuning), falling back to the swipe profile.
-function readUserTasteVector() {
-  let vals = null;
-  try { vals = JSON.parse(localStorage.getItem('seoulwalk.sliders.vals') || 'null'); } catch (e) {}
-  if (!vals) { try { return JSON.parse(localStorage.getItem('seoulwalk.swipe.profile') || '{}'); } catch (e) { return {}; } }
+// RAW: every axis with a reading, INCLUDING ones declared "doesn't matter" — a
+// screen that has to LABEL an axis still needs its lean. Anything that ranks or
+// negotiates should use readUserTasteVector() instead.
+function readTasteVectorRaw() {
+  const vals = swRead('sliders.vals', null);
+  if (!vals) return swRead('swipe.profile', {}) || {};
   const vec = {};
   Object.keys(AXIS_TO_SLIDER).forEach(ax => {
     const v = vals[AXIS_TO_SLIDER[ax]];
     if (v != null) vec[ax] = v * 2 - 1;               // [0,1] slider → [-1,+1] axis
   });
   return vec;
+}
+
+// The walker's taste as it should COUNT: the raw vector minus every axis they
+// declared "doesn't matter". A dropped axis is absent rather than zero, and every
+// consumer already reads a missing axis as neutral/flexible — so declaring
+// indifference genuinely removes the axis from the ranking and from the group
+// negotiation, instead of silently voting for the middle.
+function readUserTasteVector() {
+  const levels = readAxisLevels(), raw = readTasteVectorRaw(), out = {};
+  Object.keys(raw).forEach(ax => { if (levels[ax] !== 'off') out[ax] = raw[ax]; });
+  return out;
 }
 
 // Friends toggled to join THIS walk. Reads the persisted 'profile.friends' toggle
@@ -272,6 +355,406 @@ function groupTasteChips(merged, n) {
   });
   chips.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   return n ? chips.slice(0, n) : chips;
+}
+
+// ======== GROUP RECONCILIATION =============================================
+// The ONE place where "what does this group actually want" is computed, so the
+// group screen and the map can never disagree about it. Everything here derives
+// from PERSISTED state (declared levels + slider positions + the nudges the group
+// applied), never from React state, because the two screens are never mounted at
+// the same time — the map has to be able to read the negotiation the group screen
+// left behind.
+
+// Person hues. Cobalt is me (outing-solo in the DS); friends cycle the rest.
+// Deliberately NOT the DS match/safe/alert hues, which are reserved for axis state.
+const PERSON_HUES = { me: '#4456FF', friends: ['#8A5BFF', '#B84BFF', '#F59E0B', '#0EA5E9', '#EC4899', '#14B8A6'] };
+
+// up to two uppercase initials from a display name, for the avatar disc
+function tasteInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts.length > 1 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2)).toUpperCase();
+}
+
+// A person's tolerance band on one axis, in slider space [0,1]. No reading, or a
+// declared 'off' → the FULL width: they never block common ground and can never be
+// named the outlier. Anything they declared gets the same half-width, so this is
+// where a future extra level (a narrower, harder-to-bend band) would slot in.
+function axisBand(value, level) {
+  if (level === 'off' || value == null || isNaN(value)) return [0, 1];
+  const s = (clamp(value, -1, 1) + 1) / 2;
+  return [Math.max(0, s - BAND_PREF), Math.min(1, s + BAND_PREF)];
+}
+
+// intersection of N [lo,hi] intervals, or null if they don't all overlap
+function axisIntersect(ints) {
+  const lo = Math.max(...ints.map(r => r[0]));
+  const hi = Math.min(...ints.map(r => r[1]));
+  return lo < hi ? [lo, hi] : null;
+}
+
+// Classify one axis from a set of bands: everybody overlaps ('common'), one person
+// apart from a majority that would agree without them ('nudge'), or nobody
+// overlapping anybody ('scatter').
+function mergeAxisRanges(ranges, members) {
+  const all = axisIntersect(members.map(id => ranges[id]));
+  if (all) return { kind: 'common', band: all };
+
+  // who, if they bend, unlocks the widest agreement for everyone else?
+  let best = null;
+  members.forEach(o => {
+    const band = axisIntersect(members.filter(m => m !== o).map(m => ranges[m]));
+    if (band && (!best || band[1] - band[0] > best.band[1] - best.band[0])) best = { outlier: o, band };
+  });
+  if (best) {
+    const r = ranges[best.outlier];
+    return { kind: 'nudge', band: best.band, outlier: best.outlier,
+      meet: (best.band[0] + best.band[1]) / 2,            // middle of where the others agree
+      side: r[0] > best.band[1] ? 'right' : 'left' };     // which way the outlier leans
+  }
+
+  // Nobody overlaps anybody — meet at the MEDIAN lean and bend whoever sits
+  // furthest from it. Median (not the middle element) so this holds for any group
+  // size, including the couple and 4+ cases, not just three people.
+  const mids = members.map(id => ({ id, mid: (ranges[id][0] + ranges[id][1]) / 2 })).sort((a, b) => a.mid - b.mid);
+  const half = mids.length / 2;
+  const meet = mids.length % 2 ? mids[Math.floor(half)].mid : (mids[half - 1].mid + mids[half].mid) / 2;
+  const outlier = mids.reduce((f, m) => Math.abs(m.mid - meet) > Math.abs(f.mid - meet) ? m : f, mids[0]).id;
+  return { kind: 'scatter', band: [meet - 0.07, meet + 0.07], outlier, meet,
+    side: ranges[outlier][0] > meet ? 'right' : 'left' };
+}
+
+// ---- how a disagreement gets settled ---------------------------------------
+// One conflict, four possible ways out. A settlement is stored per axis in
+// 'group.settle' as { how, status, by, value?, winner?, other?, deal? }:
+//
+//   'middle' — go to where the group already agrees. With 3+ people that band IS the
+//              majority's, so this leans toward wherever most of them are.
+//   'drop'   — the axis stops shaping the walk. This is the honest answer for a PAIR
+//              with no overlap: there is no majority to lean toward, and a midpoint
+//              between two opposite tastes is a place neither of them asked for.
+//   'point'  — a specific spot the group dragged the marker to, rather than the one
+//              the app proposed.
+//   'trade'  — this axis goes to one person's own zone, outright, because they gave
+//              another axis away in exchange (see proposeTrade).
+//
+// status is 'proposed' or 'agreed', and ONLY 'agreed' moves the walk. That is the
+// whole point: the app must not report an agreement that nobody consented to, so a
+// proposal is visible, reversible, and inert until the person it asks something of
+// accepts. `by` is who proposed it — and, while it is pending, whose turn it is to
+// move the marker. Persisted rather than React state so the map sees it too, and
+// written synchronously so a read right after a tap already reflects it.
+const SETTLE_KEY = 'group.settle';
+
+// My id in the negotiation. Once a walk is shared this MUST be my participant id and
+// not a local alias: `by`, `asks` and `winner` travel to the other phones inside the
+// document, and 'me' would resolve to "whoever is reading" on each of them. Falls back
+// to 'me' only when there is no session at all (offline prototype).
+function myMemberId() {
+  const S = window.StudyAPI || {};
+  const pid = S.myParticipantId && S.myParticipantId();
+  return pid != null ? String(pid) : 'me';
+}
+
+function readSettlements() {
+  const s = swRead(SETTLE_KEY, null);
+  // Older single-device state wrote 'me' as the proposer. Normalise it to my real id
+  // so a negotiation started before the walk existed keeps working once it is shared.
+  if (s) {
+    const mine = myMemberId();
+    if (mine !== 'me') {
+      Object.keys(s).forEach(ax => {
+        if (s[ax] && s[ax].by === 'me') s[ax] = { ...s[ax], by: mine };
+      });
+    }
+    return s;
+  }
+  // pre-settlement state: 'group.nudges' was a bare { axis: true } set of applied
+  // middles. Read it as already-agreed so an in-progress negotiation isn't lost.
+  const legacy = swRead('group.nudges', {}) || {};
+  const out = {};
+  Object.keys(legacy).forEach(ax => { if (legacy[ax]) out[ax] = { how: 'middle', status: 'agreed', by: myMemberId() }; });
+  return out;
+}
+
+// Write locally FIRST so the tap feels instant, then push the same patch to the walk
+// if there is one. The poll is what reconciles us with the other phones; on a version
+// conflict the server hands back the current document and the client adopts it.
+function writeSettlements(all, patch, meta) {
+  swWrite(SETTLE_KEY, all);
+  const S = window.StudyAPI || {};
+  if (patch && S.currentWalkId && S.currentWalkId() && S.patchWalkState) S.patchWalkState(patch, meta);
+  try { window.dispatchEvent(new CustomEvent('seoulwalk:groupsettle', { detail: { settlements: all } })); } catch (e) {}
+  return all;
+}
+// Every axis a settlement covers: on its own, or the whole bargain when it is a trade.
+function dealKeys(all, axis) {
+  const s = all[axis];
+  if (!s) return [];
+  return s.deal ? Object.keys(all).filter(k => all[k] && all[k].deal === s.deal) : [axis];
+}
+function setSettlement(axis, s) {
+  const all = readSettlements();
+  if (s) all[axis] = s; else delete all[axis];
+  return writeSettlements(all, { [axis]: s || null }, { action: s ? 'propose' : 'undo', axis });
+}
+// Accept every axis in a deal at once — a trade is ONE bargain over two axes, so it
+// can't be half-accepted. Axes settled on their own carry no deal id and accept alone.
+function agreeSettlement(axis) {
+  const all = readSettlements();
+  const keys = dealKeys(all, axis);
+  if (!keys.length) return all;
+  const patch = {};
+  keys.forEach(k => { all[k] = { ...all[k], status: 'agreed' }; patch[k] = all[k]; });
+  return writeSettlements(all, patch, { action: 'accept', axis });
+}
+// Hand the turn to the person being asked, keeping the value as the starting point
+// for their counter-offer.
+function counterSettlement(axis, asks) {
+  const all = readSettlements();
+  const keys = dealKeys(all, axis);
+  if (!keys.length || !asks) return all;
+  const patch = {};
+  keys.forEach(k => { all[k] = { ...all[k], by: asks, status: 'proposed' }; patch[k] = all[k]; });
+  return writeSettlements(all, patch, { action: 'counter', axis });
+}
+function clearSettlement(axis) {
+  const all = readSettlements();
+  const keys = dealKeys(all, axis);
+  if (!keys.length) return all;
+  const patch = {};
+  keys.forEach(k => { delete all[k]; patch[k] = null; });
+  return writeSettlements(all, patch, { action: 'undo', axis });
+}
+function clearGroupSettlements() {
+  const patch = {};
+  Object.keys(readSettlements()).forEach(k => { patch[k] = null; });
+  return writeSettlements({}, Object.keys(patch).length ? patch : null, { action: 'undo' });
+}
+
+// Which way out the app offers first, given how many people are walking. A pair has
+// no majority to lean toward, so it is offered the drop rather than a midpoint.
+function defaultHow(memberCount) { return memberCount <= 2 ? 'drop' : 'middle'; }
+
+// Turn a settlement into its effect on one axis. Called only for AGREED settlements;
+// a pending one is previewed by the UI but must not reach here.
+function applySettlement(s, ranges, base, ids) {
+  if (s.how === 'drop') return { eff: ranges, band: null, center: null, idle: true };
+  if (s.how === 'trade') {
+    const w = ranges[s.winner] || [0, 1];
+    return { eff: ranges, band: w, center: (w[0] + w[1]) / 2, idle: false };
+  }
+  // 'middle' and 'point' differ only in WHERE they land: the app's proposal, or the
+  // spot the group dragged to. Both stretch every band to reach it, then re-classify.
+  // (For 'middle' the point already sits inside the majority's band, so stretching
+  // theirs is a no-op and only the outlier actually moves.)
+  const meet = clamp(s.how === 'point' && s.value != null ? s.value : base.meet, 0, 1);
+  const eff = {};
+  ids.forEach(id => {
+    const r = ranges[id];
+    eff[id] = [Math.min(r[0], meet), Math.max(r[1], meet)];
+  });
+  const view = mergeAxisRanges(eff, ids);
+  const band = view.kind === 'common' ? view.band : [meet - 0.06, meet + 0.06];
+  // A dragged point is a deliberate choice, so the walk goes exactly there. A middle
+  // resolves to the centre of the zone everyone now holds in common.
+  return { eff, band, center: s.how === 'point' ? meet : (band[0] + band[1]) / 2, idle: false };
+}
+
+// Who has to agree to this settlement: the person it asks the most of. For a trade
+// that's the other winner — they're the one handing this axis over. Otherwise it's
+// whoever's own zone sits furthest from where the settlement lands. Never the person
+// who proposed it, and never nobody: with a pair it's always the other one.
+function settlementAsks(s, ranges, ids, center) {
+  if (s.how === 'trade' && s.other) return s.other;
+  const pool = ids.filter(id => id !== s.by);
+  if (!pool.length) return null;
+  const at = center == null ? 0.5 : center;
+  const dist = id => {
+    const r = ranges[id] || [0, 1];
+    return r[0] > at ? r[0] - at : r[1] < at ? at - r[1] : 0;
+  };
+  return pool.reduce((f, id) => (dist(id) > dist(f) ? id : f), pool[0]);
+}
+
+// Pair two open disagreements so each side wins one OUTRIGHT, instead of both living
+// in a lukewarm middle on both. Returns the two halves of the bargain, or null when
+// there is no pair that gives two different people something.
+// This is the axis-level version of "each of us gets one" — it changes the SHAPE of
+// the concession (one big loss each, instead of two small ones) rather than its size.
+function proposeTrade(axes, ids) {
+  const open = axes.filter(a => a.conflict && !a.applied && !a.pending && a.outlier);
+  if (open.length < 2) return null;
+  // Stand-in for "the majority" on an axis: of everyone except the outlier, the member
+  // whose own zone sits closest to the zone the others already share.
+  const majorityOf = a => {
+    const mid = (a.band[0] + a.band[1]) / 2;
+    const pool = ids.filter(id => id !== a.outlier);
+    if (!pool.length) return null;
+    const dist = id => {
+      const r = a.ranges[id] || [0, 1];
+      return Math.abs((r[0] + r[1]) / 2 - mid);
+    };
+    return pool.reduce((f, id) => (dist(id) < dist(f) ? id : f), pool[0]);
+  };
+  for (let i = 0; i < open.length; i++) {
+    for (let j = i + 1; j < open.length; j++) {
+      const A = open[i], B = open[j];
+      // A goes to whoever is currently being asked to bend on it; B goes to the other
+      // side. When the same person is the odd one out on both, they take A and the
+      // majority takes B — so the bargain still has two different winners.
+      const aWin = A.outlier;
+      const bWin = B.outlier !== A.outlier ? B.outlier : majorityOf(B);
+      if (!bWin || bWin === aWin) continue;
+      return [{ axis: A.id, winner: aWin, other: bWin }, { axis: B.id, winner: bWin, other: aWin }];
+    }
+  }
+  return null;
+}
+
+// Levels inferred for someone whose own declaration we don't have: an axis they have
+// a reading on counts as 'pref', a missing one as 'off' — flexible, never a reject.
+function levelsFromVector(vec) {
+  const levels = {};
+  vec = vec || {};
+  (SWIPE_AXES || []).forEach(([k]) => { levels[k] = (vec[k] == null || isNaN(vec[k])) ? 'off' : 'pref'; });
+  return levels;
+}
+
+// The group on THIS walk, each with the taste vector and levels the negotiation runs on.
+//
+// Two sources, in order of authority:
+//   1. A SHARED walk — the group is its accepted members, with the taste each of them
+//      froze when they accepted, mine included. Every phone therefore reconciles the
+//      exact same numbers. My live sliders deliberately do NOT steer the group here:
+//      once a walk is shared, the target moves by agreement, not by one person
+//      dragging a slider on their own screen.
+//   2. No walk — the local prototype path: me plus the friends toggled on in my
+//      profile, using their latest published profile vector.
+function buildGroupMembers(userVec) {
+  const S = window.StudyAPI || {};
+  const myName = (S.currentDisplayName && S.currentDisplayName()) || 'You';
+  const myId = myMemberId();
+  const walk = S.currentWalk && S.currentWalk();
+  const accepted = walk && walk.members ? walk.members.filter(m => m.status === 'accepted') : [];
+
+  if (accepted.length) {
+    let f = 0;
+    return accepted.map(m => {
+      const id = String(m.participant_id);
+      const isMe = id === myId;
+      const name = isMe ? myName : (m.display_name || 'friend');
+      return {
+        id, name, init: tasteInitials(name), isMe,
+        hue: isMe ? PERSON_HUES.me : PERSON_HUES.friends[(f++) % PERSON_HUES.friends.length],
+        vec: m.vector || (isMe ? (userVec || readUserTasteVector()) : {}),
+        levels: m.levels || levelsFromVector(m.vector),
+      };
+    });
+  }
+
+  const me = { id: myId, name: myName, init: tasteInitials(myName), isMe: true, hue: PERSON_HUES.me,
+    vec: userVec || readUserTasteVector(), levels: readAxisLevels() };
+  const friends = activeJoiningFriends().map((f, i) => {
+    const name = f.display_name || f.friend_code || 'friend';
+    const vec = f.profile || {};
+    return { id: String(f.participant_id), name, init: tasteInitials(name), isMe: false,
+      hue: PERSON_HUES.friends[i % PERSON_HUES.friends.length], vec, levels: levelsFromVector(vec) };
+  });
+  return [me].concat(friends);
+}
+
+// My own taste snapshot, as it must be frozen into a walk when I accept it.
+function myWalkSnapshot() {
+  return { vector: readUserTasteVector(), levels: readAxisLevels() };
+}
+
+// The full per-axis negotiation, ready for both display and ranking.
+// Each axis reports BOTH what has been agreed (`applied`, which moves the walk) and
+// what is merely on the table (`pending`, which doesn't) — so the screen can show an
+// offer honestly without the map silently acting on it.
+function reconcileGroupAxes(userVec, membersOverride) {
+  const members = membersOverride || buildGroupMembers(userVec);
+  const ids = members.map(m => m.id);
+  const byId = Object.fromEntries(members.map(m => [m.id, m]));
+  const settlements = readSettlements();
+  // the clean bipolar axes only — greenery has a single pole, so it has no "middle"
+  const bipolar = (SWIPE_AXES || []).filter(a => a[0] !== 'park' && a[1] && a[2]);
+  const axes = bipolar.map(([key, left, right]) => {
+    const ranges = {};
+    members.forEach(m => { ranges[m.id] = axisBand(m.vec[key], m.levels[key]); });
+    const base = mergeAxisRanges(ranges, ids);
+    const conflict = base.kind !== 'common';
+    const s = conflict ? settlements[key] : null;
+    const applied = s && s.status === 'agreed' ? s : null;
+    const pending = s && s.status === 'proposed' ? s : null;
+
+    const out = applied ? applySettlement(applied, ranges, base, ids)
+      : { eff: ranges, band: base.band, center: base.band ? (base.band[0] + base.band[1]) / 2 : base.meet, idle: false };
+
+    // Nobody declared anything here → the group has no opinion on this axis, and it
+    // must NOT be ranked on: otherwise "we're all indifferent" would silently
+    // become "we all want the exact middle".
+    const noneDeclared = ids.every(id => ranges[id][0] <= 0 && ranges[id][1] >= 1);
+
+    // Where a pending offer WOULD land, purely so the marker can be drawn there.
+    const previewAt = pending
+      ? clamp(pending.how === 'point' && pending.value != null ? pending.value
+        : pending.how === 'trade' ? (ranges[pending.winner][0] + ranges[pending.winner][1]) / 2
+          : base.meet, 0, 1)
+      : null;
+    const live = pending || applied;
+    return {
+      id: key, left, right, ranges, eff: out.eff,
+      kind: base.kind, conflict, idle: noneDeclared || out.idle,
+      band: out.band, center: out.center,
+      outlier: base.outlier || null, side: base.side || null,
+      meet: base.meet != null ? base.meet : null,
+      applied, pending, previewAt,
+      // whose turn it is to move the marker, and who owes an answer
+      turn: live ? live.by : null,
+      asks: live ? settlementAsks(live, ranges, ids, pending ? previewAt : out.center) : null,
+    };
+  });
+  return { members, ids, byId, axes, settlements };
+}
+
+// THE group vibe target — the single value the group screen AND the map rank on.
+// `userVecOverride` lets the map pass its live in-map slider positions instead of
+// the persisted ones, so dragging a slider still re-ranks instantly.
+// Returns { target, group, axes, members }; walking solo, `group` is null and the
+// target is the walker's own vector untouched.
+function groupTarget(userVecOverride) {
+  const userVec = userVecOverride || readUserTasteVector();
+  // Who counts is decided in one place (buildGroupMembers): the accepted members of a
+  // shared walk if there is one, else the friends toggled on locally. Alone, nothing
+  // is negotiated and the walker's own vector passes through untouched.
+  const members = buildGroupMembers(userVec);
+  const others = members.filter(m => !m.isMe);
+  if (!others.length) return { target: userVec, group: null, axes: null, members: null };
+  const rec = reconcileGroupAxes(userVec, members);
+  const target = { ...userVec };
+  const negotiated = {};
+  rec.axes.forEach(a => {
+    negotiated[a.id] = true;
+    if (a.idle) { delete target[a.id]; return; }        // nobody cares → don't rank on it
+    // An axis I'm indifferent about but my friends care about DOES enter the target
+    // here, at the point they agreed on: "doesn't matter to me" means I never block,
+    // not that the group has to drop the dimension.
+    target[a.id] = clamp(a.center * 2 - 1, -1, 1);      // slider space → axis space
+  });
+  // Axes outside the negotiated set (greenery has one pole, so there is no middle to
+  // meet at) keep the plain average over whoever has an opinion, as before.
+  Object.keys(target).forEach(ax => {
+    if (negotiated[ax]) return;
+    const votes = [target[ax]];
+    others.forEach(m => { const v = m.vec && m.vec[ax]; if (v != null && !isNaN(v)) votes.push(v); });
+    target[ax] = votes.reduce((a, b) => a + b, 0) / votes.length;
+  });
+  return {
+    target, axes: rec.axes, members: rec.members,
+    group: { count: others.length, names: others.map(m => m.name) },
+  };
 }
 
 // Shared street recommender — lets the Social / Group screens rank the SAME
@@ -549,7 +1032,14 @@ Object.assign(window, {
   THEMES, THEME_ORDER, HERO_PHOTO, SWIPE_CARDS, SWIPE_AXES, VIBE_AXES,
   AXIS_TO_SLIDER, computeSwipeProfile, commitSwipeProfile,
   computeProfileFromPairs, commitPairsProfile, rehydrateProfileFromVector,
-  readUserTasteVector, activeJoiningFriends, mergeTasteVectors, groupTasteChips,
+  readUserTasteVector, readTasteVectorRaw, activeJoiningFriends,
+  mergeTasteVectors, groupTasteChips,
+  PREF_LEVELS, BAND_PREF, readAxisLevels, axisLevel, setAxisLevel,
+  PERSON_HUES, tasteInitials, axisBand, axisIntersect, mergeAxisRanges,
+  readSettlements, setSettlement, agreeSettlement, counterSettlement,
+  clearSettlement, clearGroupSettlements, defaultHow, applySettlement,
+  settlementAsks, proposeTrade, myMemberId, levelsFromVector, myWalkSnapshot,
+  buildGroupMembers, reconcileGroupAxes, groupTarget,
   loadVibeStreets, recommendForVector, useRecommendations,
   cardById, readPairOverride, resolveSwipePairs,
   MAP_ZONE, MAP_SPOTS, HIDDEN_PATH, FAMOUS_PATH, RECO_PATH, MAP_MODES, PEOPLE, SOCIAL,

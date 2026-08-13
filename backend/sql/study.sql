@@ -233,3 +233,71 @@ CREATE TABLE IF NOT EXISTS app_event (
 );
 CREATE INDEX IF NOT EXISTS idx_app_event_session ON app_event (session_id);
 CREATE INDEX IF NOT EXISTS idx_app_event_type ON app_event (event_type);
+
+-- SHARED WALK (friends mode) -------------------------------------------------
+
+-- One row per "these friends are negotiating and walking together right now".
+-- This is what makes the friends mode actually shared: before it existed, who was
+-- coming and every step of the preference negotiation lived only in one phone's
+-- localStorage, so the other participants' apps knew nothing about any of it.
+--
+-- `state` IS the negotiation: one entry per axis, keyed by axis name, holding how
+-- that disagreement is being settled ('middle' | 'drop' | 'point' | 'trade'), who
+-- proposed it, and whether it has been accepted yet. Deliberately ONE jsonb
+-- document rather than a row per axis -- every phone reads the whole negotiation on
+-- each poll, and a document delivers that in one round trip with no chance of
+-- observing a half-applied change.
+--
+-- `version` is bumped on every state write. Clients poll it to tell "nothing moved"
+-- from "re-read everything" cheaply, and send the version they last saw when
+-- patching, so two phones editing at the same moment is DETECTED rather than one
+-- silently overwriting the other.
+CREATE TABLE IF NOT EXISTS walk (
+    id          SERIAL PRIMARY KEY,
+    host_id     INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    status      VARCHAR(10) NOT NULL DEFAULT 'lobby',   -- 'lobby' | 'active' | 'ended'
+    state       JSONB NOT NULL DEFAULT '{}'::jsonb,     -- the per-axis negotiation
+    version     INTEGER NOT NULL DEFAULT 0,             -- bumped on every state write
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    started_at  TIMESTAMPTZ,
+    ended_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_walk_host ON walk (host_id);
+
+-- Who is on a walk, and whether they have agreed to be on it. A walk opens with the
+-- host 'accepted' and everyone else 'invited'; nobody's taste enters the negotiation
+-- until they answer, which is what makes "the others have to accept" a real gate
+-- rather than a label on a screen.
+--
+-- `vector` and `levels` are SNAPSHOT at the moment of accepting, not read live from
+-- profile_snapshot. If someone re-swipes their onboarding mid-walk the negotiation
+-- must not silently shift under everyone else's feet: the snapshot is "what we agreed
+-- to negotiate over", and it is also what makes the concession reconstructable
+-- afterwards (RQ1) instead of being measured against a moving baseline.
+CREATE TABLE IF NOT EXISTS walk_member (
+    walk_id         INTEGER NOT NULL REFERENCES walk(id) ON DELETE CASCADE,
+    participant_id  INTEGER NOT NULL REFERENCES participant(id) ON DELETE CASCADE,
+    role            VARCHAR(10) NOT NULL DEFAULT 'guest',    -- 'host' | 'guest'
+    status          VARCHAR(10) NOT NULL DEFAULT 'invited',  -- 'invited' | 'accepted' | 'declined'
+    vector          JSONB,                                   -- taste snapshot, taken when they accepted
+    levels          JSONB,                                   -- declared per-axis levels, same moment
+    invited_at      TIMESTAMPTZ DEFAULT NOW(),
+    answered_at     TIMESTAMPTZ,
+    PRIMARY KEY (walk_id, participant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_walk_member_participant ON walk_member (participant_id);
+
+-- Append-only trail of the negotiation: one row per proposal, acceptance, counter or
+-- undo. `walk.state` only ever holds the CURRENT position, but RQ1 is about the path
+-- taken to reach it -- who conceded, on which axis, after how many counter-offers,
+-- and how long it took. That is unrecoverable from the final state alone.
+CREATE TABLE IF NOT EXISTS walk_event (
+    id              BIGSERIAL PRIMARY KEY,
+    walk_id         INTEGER NOT NULL REFERENCES walk(id) ON DELETE CASCADE,
+    participant_id  INTEGER REFERENCES participant(id) ON DELETE SET NULL,
+    axis            VARCHAR(40),                -- null for whole-walk actions
+    action          VARCHAR(20) NOT NULL,       -- 'propose' | 'accept' | 'counter' | 'undo' | 'invite' | 'answer' | 'status'
+    payload         JSONB,
+    ts              TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_walk_event_walk ON walk_event (walk_id, ts);

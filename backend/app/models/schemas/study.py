@@ -142,6 +142,54 @@ class FriendFavoritesOut(BaseModel):
     favorites: list[FriendFavoriteOut] = []
 
 
+# --- shared walk (friends mode) ---------------------------------------------
+
+class WalkCreate(BaseModel):
+    invite: list[int] = []                            # participant ids to invite (must be friends)
+    vector: dict[str, float | None] | None = None     # the HOST's taste snapshot
+    levels: dict[str, str] | None = None              # the host's declared per-axis levels
+
+
+class WalkAnswerIn(BaseModel):
+    accept: bool                                      # False = decline the invitation
+    vector: dict[str, float | None] | None = None     # my taste snapshot, frozen at this moment
+    levels: dict[str, str] | None = None
+
+
+class WalkStateIn(BaseModel):
+    """A patch on the negotiation. `patch` maps axis -> settlement, or axis -> null to
+    clear that axis. `base_version` is the version the client last saw: if the walk has
+    moved on since, the write is refused so the client re-reads instead of clobbering
+    someone else's change."""
+    patch: dict[str, dict | None]
+    base_version: int | None = None
+    action: str | None = None                         # 'propose' | 'accept' | 'counter' | 'undo'
+    axis: str | None = None                           # which axis the action was about
+
+
+class WalkStatusIn(BaseModel):
+    status: str                                       # 'active' | 'ended'
+
+
+class WalkMemberOut(BaseModel):
+    participant_id: int
+    display_name: str | None = None
+    role: str
+    status: str
+    vector: dict[str, float | None] | None = None
+    levels: dict[str, str] | None = None
+
+
+class WalkOut(BaseModel):
+    walk_id: int
+    host_id: int
+    me: int                                           # the asking participant, so the client
+    status: str                                       # knows which member row is itself
+    state: dict = {}
+    version: int
+    members: list[WalkMemberOut] = []
+
+
 # --- generic events ---------------------------------------------------------
 
 class AppEventIn(BaseModel):

@@ -53,9 +53,10 @@ function SocialScreen({ go }) {
     })
   );
 
-  const group = (window.mergeTasteVectors && active.length)
-    ? window.mergeTasteVectors([solo].concat(active.map(f => f.profile)))
-    : solo;
+  // The group's taste comes from the SAME negotiated target the group screen and the
+  // map use (theme.jsx groupTarget) — not a separate average — so the three screens
+  // can't recommend different streets for the same company.
+  const group = (window.groupTarget && active.length) ? window.groupTarget().target : solo;
   const chips = (window.groupTasteChips && active.length) ? window.groupTasteChips(group, 4) : [];
   const shifts = active.length ? tasteShifts(solo, group) : [];
   const noFriends = withFriends && joining.length === 0;

@@ -234,7 +234,14 @@ function App() {
   React.useEffect(() => {
     if (!sessionReady || !window.StudyAPI || !window.StudyAPI.startFriendPolling) return;
     window.StudyAPI.startFriendPolling(10000);
-    return () => { if (window.StudyAPI.stopFriendPolling) window.StudyAPI.stopFriendPolling(); };
+    // The shared walk polls FASTER than the friends list: a friend appearing can wait
+    // ten seconds, but an offer on a negotiation the group is doing side by side has to
+    // land on the other phone while they are still looking at it.
+    if (window.StudyAPI.startWalkPolling) window.StudyAPI.startWalkPolling(2500);
+    return () => {
+      if (window.StudyAPI.stopFriendPolling) window.StudyAPI.stopFriendPolling();
+      if (window.StudyAPI.stopWalkPolling) window.StudyAPI.stopWalkPolling();
+    };
   }, [sessionReady]);
 
   // GPS watch + trace upload for the whole session — see the notes above. Gated on

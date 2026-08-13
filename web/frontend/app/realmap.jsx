@@ -298,21 +298,18 @@ function readVibeTarget() {
   return targetFromSliders(vals, off, readGreenMode());
 }
 
-// Blend the friends joining THIS walk into the vibe target. For each axis the user
-// cares about we average the user's weight with every joining friend who has an
-// opinion on it; a friend missing that axis is skipped (neutral, never a reject),
-// so a new/empty friend profile never distorts the ranking. Returns
-// { target, group } where group is null when walking solo (target unchanged).
+// Blend the friends joining THIS walk into the vibe target. Delegates to the ONE
+// group target (theme.jsx groupTarget) instead of averaging raw vectors here: that
+// second, independent average was the reason the group screen's reconciliation had
+// no effect on the map — you could settle every axis and not move a single street.
+// Now the map ranks on exactly what the group negotiated, nudges included.
+// `userTarget` is passed through as the walker's own side of the blend so the live
+// in-map sliders still re-rank instantly (no localStorage round-trip).
+// Returns { target, group } where group is null when walking solo (target unchanged).
 function mergeTargetWithGroup(userTarget) {
-  const active = (window.activeJoiningFriends && window.activeJoiningFriends()) || [];
-  if (!active.length) return { target: userTarget, group: null };
-  const merged = {};
-  Object.keys(userTarget).forEach(ax => {
-    const votes = [userTarget[ax]];
-    active.forEach(f => { const v = f.profile && f.profile[ax]; if (v != null && !isNaN(v)) votes.push(v); });
-    merged[ax] = votes.reduce((a, b) => a + b, 0) / votes.length;
-  });
-  return { target: merged, group: { count: active.length, names: active.map(f => f.display_name || f.friend_code) } };
+  if (!window.groupTarget) return { target: userTarget, group: null };
+  const g = window.groupTarget(userTarget);
+  return { target: g.target, group: g.group };
 }
 
 // Percentile-normalise every axis the SAME way, so the six sliders react in one

@@ -1,196 +1,216 @@
 /* ============================================================
    3B — GROUP PREFERENCE-MERGE
-   Each shared axis as an overlap band, COMPUTED from every
-   person's comfortable range. Three outcomes per axis:
-     · common ground  — all three ranges intersect
-     · needs a nudge   — two agree, one is the outlier; the app
-                         proposes a meet-point and lets the group
-                         nudge the outlier to reconcile
-     · scattered       — nobody overlaps; fall back to the median
-   Reconciliation is an ACTION here, not just a read-out.
+   Each shared axis as one line carrying every person's DECLARED
+   tolerance range (see theme.jsx: an axis the walker dropped gets the full width,
+   so they never block the group on it). Three outcomes per axis:
+     · common ground  — every range intersects
+     · needs settling — the others would agree without one person
+     · scattered      — nobody overlaps
+
+   A disagreement is settled by AGREEING, not by pressing a button: every way out
+   (meet in the middle / leave the axis out / a spot you dragged to / a trade across
+   two axes) is a PROPOSAL first, inert until the person it asks something of
+   accepts. The maths and the settlement state live in theme.jsx and are persisted,
+   so the streets below and the map both rank on the agreed value. This screen only
+   renders the negotiation and collects the taps.
    ============================================================ */
 
-// A person's taste is a single POINT per axis; to reuse the comfort-band overlap
-// logic we give each point a tolerance band of this half-width in slider space.
-const BAND = 0.14;
-// Person hues (me = cobalt; friends cycle through the rest). DS.match/safe are
-// reserved for the overlap bands, so they're not used as person colours.
-const FRIEND_HUES = ['#8A5BFF', '#B84BFF', '#F59E0B', '#0EA5E9', '#EC4899', '#14B8A6'];
-
-// Design-system palette (design_system/tokens/colors.css). This screen anchors
-// its DATA-VIZ FILLS to the brand colours so they read identically in every
-// prototype theme; surrounding text stays theme-driven for legibility.
+// Design-system palette (design_system/tokens/colors.css). This screen anchors its
+// DATA-VIZ FILLS to the brand colours so they read identically in every prototype
+// theme; surrounding text stays theme-driven for legibility.
 const DS = {
   solo:    '#4456FF',  // cobalt — outing-solo
   couple:  '#8A5BFF',  // iris   — outing-couple
   friends: '#B84BFF',  // mauve  — outing-friends
-  match:   '#C9FF46',  // lime   — preference match (natural common ground)
-  safe:    '#A6FFE8',  // mint   — safe path (reconciled common ground)
-  alert:   '#D238EB',  // orchid — alert / open conflict + meet-point
+  safe:    '#A6FFE8',  // mint   — everything agreed
+  alert:   '#D238EB',  // orchid — open disagreement + the meet-point marker
   ink:     '#143229',  // seaweed-900 — text on light DS fills
 };
+// There is no agreement band drawn on the axis. Where the people's own bars overlap
+// IS the common ground — painting a filled zone on top of them said the same thing a
+// second time, in a colour that shouted louder than the disagreement next to it, and
+// it covered the bars it was describing. What remains on the line is the people, and
+// a cursor wherever there is something to decide.
 
-// up to two uppercase initials from a display name, for the avatar disc
-function grpInitials(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '?';
-  return (parts.length > 1 ? parts[0][0] + parts[1][0] : parts[0].slice(0, 2)).toUpperCase();
+// Small pill button, so the three actions on a row read as one family.
+function AxisBtn({ children, onClick, kind, title }) {
+  const t = React.useContext(ThemeCtx);
+  const style = kind === 'primary'
+    ? { border: 'none', background: DS.alert, color: '#fff' }
+    : kind === 'accept'
+      ? { border: 'none', background: 'var(--good)', color: '#fff' }
+      : { border: '1.5px solid var(--line-strong)', background: 'transparent', color: 'var(--ink-soft)' };
+  return (
+    <button onClick={onClick} title={title}
+      style={{ flex: '0 0 auto', cursor: 'pointer', borderRadius: 999, padding: '6px 12px', fontFamily: t.fontUI,
+        fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', transition: 'all .2s ease', ...style }}>{children}</button>
+  );
 }
 
-// Build the walk's group (me + the friends toggled to join) and their per-axis
-// comfort ranges from REAL taste vectors. A point v∈[-1,1] → band [s-BAND, s+BAND]
-// in slider space (s=(v+1)/2); a MISSING axis → the full width [0,1] = neutral, so
-// it never blocks common ground nor makes that person the outlier (never a reject).
-// Returns { people:[{id,name,init,hue,vec}], memberIds, memberMap, axes }.
-function buildGroupData() {
-  const S = window.StudyAPI || {};
-  const myName = (S.currentDisplayName && S.currentDisplayName()) || 'You';
-  const friends = (window.activeJoiningFriends && window.activeJoiningFriends()) || [];
-  const people = [
-    { id: 'me', name: myName, init: grpInitials(myName), hue: DS.solo,
-      vec: (window.readUserTasteVector && window.readUserTasteVector()) || {} },
-    ...friends.map((f, i) => {
-      const name = f.display_name || f.friend_code || 'friend';
-      return { id: String(f.participant_id), name, init: grpInitials(name),
-        hue: FRIEND_HUES[i % FRIEND_HUES.length], vec: f.profile || {} };
-    }),
-  ];
-  const memberIds = people.map(p => p.id);
-  const memberMap = Object.fromEntries(people.map(p => [p.id, p]));
+// One axis line. `axis` is a reconciled entry from window.reconcileGroupAxes: it
+// carries the per-person ranges, the effective (post-agreement) ranges, where the walk
+// lands, and what is currently proposed vs agreed.
+function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onAccept, onCounter, onClear }) {
+  const t = React.useContext(ThemeCtx);
+  const trackRef = React.useRef(null);
+  const dragRef = React.useRef(null);                  // live value, readable mid-gesture
+  const [drag, setDrag] = React.useState(null);        // same value, for rendering
+  const conflict = axis.conflict;
+  const settled = !!axis.applied;
+  const pending = axis.pending;
+  const drawRanges = settled ? axis.eff : axis.ranges;
+  const leanWord = conflict ? (axis.side === 'right' ? axis.right : axis.left) : null;
+  const nameOf = id => (memberMap[id] ? memberMap[id].name : 'someone');
 
-  // the clean bipolar axes (green is handled specially elsewhere, and lacks two poles)
-  const bipolar = (window.SWIPE_AXES || []).filter(a => a[0] !== 'park' && a[1] && a[2]);
-  const axes = bipolar.map(([key, neg, pos]) => {
-    const ranges = {};
-    people.forEach(p => {
-      const v = p.vec[key];
-      if (v == null || isNaN(v)) { ranges[p.id] = [0, 1]; return; }   // no opinion → flexible
-      const s = (Math.max(-1, Math.min(1, v)) + 1) / 2;
-      ranges[p.id] = [Math.max(0, s - BAND), Math.min(1, s + BAND)];
-    });
-    return { id: key, left: neg, right: pos, ranges };
-  });
-  return { people, memberIds, memberMap, axes };
-}
+  // The cursor only exists where there is something to decide, or something decided.
+  // An axis you already agree on needs nothing: the overlap of the bars is the answer.
+  // While unsettled it can be dragged anywhere on the axis — that is the whole point,
+  // the group picks the spot rather than accepting the one the app worked out. Once
+  // settled it stays put and marks where the walk landed (undo to move it again).
+  const canDrag = conflict && !settled;
+  const cursorAt = settled ? axis.center
+    : drag != null ? drag
+      : pending ? axis.previewAt : axis.meet;
 
-// intersection of N [lo,hi] intervals, or null if they don't all overlap
-function intersect(ints) {
-  const lo = Math.max(...ints.map(r => r[0]));
-  const hi = Math.min(...ints.map(r => r[1]));
-  return lo < hi ? [lo, hi] : null;
-}
+  // Someone with no preference on this axis has a full-width band. Drawing that as a
+  // bar spanning the entire line reads as "I want all of it" — the opposite of what it
+  // means — and it crosses everyone else's bar for no reason. They come off the line
+  // and are named underneath instead. Tested on the DECLARED range, not the effective
+  // one, since settling only ever widens a band.
+  const hasPreference = id => {
+    const r = axis.ranges[id];
+    return !(r[0] <= 0 && r[1] >= 1);
+  };
+  const shown = memberIds.filter(hasPreference);
+  const quiet = memberIds.filter(id => !hasPreference(id));
+  // Keep the stack of bars centred on the line whatever its height, so an axis with one
+  // voice doesn't sit lopsided against an axis with three.
+  const stackTop = 17 - (4 + (shown.length - 1) * 7) / 2;
 
-// classify one axis given a set of ranges (possibly already nudged)
-function mergeAxis(ranges, members) {
-  const ints = members.map(id => ranges[id]);
-  const all = intersect(ints);
-  if (all) return { kind: 'common', band: all };
-
-  // who, if they bend, unlocks the widest agreement for everyone else?
-  let best = null;
-  members.forEach(o => {
-    const band = intersect(members.filter(m => m !== o).map(m => ranges[m]));
-    if (band && (!best || band[1] - band[0] > best.band[1] - best.band[0])) best = { outlier: o, band };
-  });
-  if (best) {
-    const r = ranges[best.outlier];
-    return { kind: 'nudge', band: best.band, outlier: best.outlier,
-      meet: (best.band[0] + best.band[1]) / 2,            // middle of where the others agree
-      side: r[0] > best.band[1] ? 'right' : 'left' };     // which way the outlier leans
+  function valueFromClient(clientX) {
+    const r = trackRef.current.getBoundingClientRect();
+    return clamp((clientX - r.left) / r.width, 0, 1);
+  }
+  // The live position lives in a REF as well as in state. State alone would be read
+  // stale by the handlers: within one gesture React has not re-rendered yet, so a
+  // plain tap (down then up, no movement) would see `drag === null` and be thrown
+  // away. A tap on the axis has to place the cursor just like a drag does.
+  function setAt(v) { dragRef.current = v; setDrag(v); }
+  function down(e) {
+    if (!canDrag) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {}
+    setAt(valueFromClient(e.clientX));
+  }
+  function move(e) { if (dragRef.current != null) setAt(valueFromClient(e.clientX)); }
+  function up() {
+    const v = dragRef.current;
+    if (v == null) return;
+    dragRef.current = null;
+    setDrag(null);
+    // Letting go IS the proposal — the spot you put the cursor on, offered by whoever
+    // currently holds the turn.
+    onPropose(axis.id, { how: 'point', value: v, by: pending ? pending.by : me, status: 'proposed' });
   }
 
-  // nobody overlaps anybody — meet at the median lean, bend the furthest person
-  const sorted = members.map(id => ({ id, mid: (ranges[id][0] + ranges[id][1]) / 2 })).sort((a, b) => a.mid - b.mid);
-  const meet = sorted[1].mid;
-  const outlier = meet - sorted[0].mid >= sorted[2].mid - meet ? sorted[0].id : sorted[2].id;
-  return { kind: 'scatter', band: [meet - 0.07, meet + 0.07], outlier, meet, side: ranges[outlier][0] > meet ? 'right' : 'left' };
-}
-
-// extend the outlier's range to reach the meet-point, then re-classify
-function reconcile(axis, base, members) {
-  const r = axis.ranges[base.outlier];
-  const eff = { ...axis.ranges, [base.outlier]: [Math.min(r[0], base.meet), Math.max(r[1], base.meet)] };
-  const view = mergeAxis(eff, members);
-  return view.kind === 'common'
-    ? { ranges: eff, band: view.band }
-    : { ranges: eff, band: [base.meet - 0.06, base.meet + 0.06] }; // safety net for the scatter case
-}
-
-function AxisRow({ axis, memberIds, memberMap, nudged, onToggle }) {
-  const t = React.useContext(ThemeCtx);
-  const base = mergeAxis(axis.ranges, memberIds);
-  const conflict = base.kind !== 'common';
-  const resolved = conflict && nudged;
-
-  // ranges to draw (the outlier's bar grows to the meet-point once reconciled)
-  const r = resolved ? reconcile(axis, base, memberIds) : null;
-  const drawRanges = resolved ? r.ranges : axis.ranges;
-  const band = base.kind === 'common' ? base.band : resolved ? r.band : base.band;
-  const outName = conflict ? memberMap[base.outlier].name : null;
-  const leanWord = conflict ? (base.side === 'right' ? axis.right : axis.left) : null;
-
-  // DS colours: natural common ground = lime, reconciled = mint, open conflict
-  // shows the partial (2-of-3) match softly in lime with an orchid meet-point.
-  const bandCol = !conflict ? DS.match : resolved ? DS.safe : `color-mix(in srgb, ${DS.match} 55%, transparent)`;
-  const showOverlapLabel = !conflict && band[1] - band[0] >= 0.16;
+  // What the offer on the table says, in the group's words.
+  function pendingLine() {
+    const who = pending.by === me ? 'You' : nameOf(pending.by);
+    const asks = nameOf(axis.asks);
+    if (pending.how === 'drop') return `${who} suggest${who === 'You' ? '' : 's'} leaving this one out — waiting for ${asks}`;
+    if (pending.how === 'trade') return `Part of the trade — ${nameOf(pending.winner)} takes this one`;
+    if (pending.how === 'point') return `${who} propose${who === 'You' ? '' : 's'} this spot — waiting for ${asks}`;
+    return `${who} propose${who === 'You' ? '' : 's'} the middle — waiting for ${asks}`;
+  }
+  function settledLine() {
+    const how = axis.applied.how;
+    if (how === 'drop') return 'Left out — this one no longer shapes the walk';
+    if (how === 'trade') return `Traded — ${nameOf(axis.applied.winner)} takes this one, their way`;
+    if (how === 'point') return 'Settled on the spot you agreed';
+    return 'Settled in the middle you agreed';
+  }
 
   return (
-    <div>
+    <div style={{ opacity: axis.applied && axis.applied.how === 'drop' ? 0.55 : 1, transition: 'opacity .3s ease' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 9 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>{axis.left}</span>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>{axis.right}</span>
       </div>
 
-      <div style={{ position: 'relative', height: 34 }}>
+      <div ref={trackRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+        style={{ position: 'relative', height: 34, cursor: canDrag ? 'ew-resize' : 'default', touchAction: canDrag ? 'none' : 'auto' }}>
         {/* baseline */}
         <div style={{ position: 'absolute', top: 15, left: 0, right: 0, height: 4, borderRadius: 999, background: 'var(--line)' }} />
 
-        {/* individual ranges — one tinted bar per person */}
-        {memberIds.map((id, i) => {
+        {/* one bar per person WHO HAS A PREFERENCE here. Where these overlap is the
+            common ground — nothing is painted on top to restate it. The person still in
+            disagreement is outlined, not dimmed: dimming read as "ignored". */}
+        {shown.map((id, i) => {
           const rr = drawRanges[id];
-          const isOut = conflict && id === base.outlier;
+          const isOut = conflict && !settled && id === axis.outlier;
           return (
-            <div key={id} style={{ position: 'absolute', top: 5 + i * 7, left: `${rr[0] * 100}%`, width: `${(rr[1] - rr[0]) * 100}%`,
+            <div key={id} style={{ position: 'absolute', zIndex: 1, top: stackTop + i * 7, left: `${rr[0] * 100}%`, width: `${(rr[1] - rr[0]) * 100}%`,
               height: 4, borderRadius: 999, background: memberMap[id].hue,
-              opacity: isOut && !resolved ? 0.45 : 0.9,
-              transition: 'left .5s cubic-bezier(.22,1,.36,1), width .5s cubic-bezier(.22,1,.36,1), opacity .3s ease' }} />);
+              outline: isOut ? `1.5px solid ${DS.alert}` : 'none', outlineOffset: 1.5,
+              transition: 'left .5s cubic-bezier(.22,1,.36,1), width .5s cubic-bezier(.22,1,.36,1), top .3s ease' }} />);
         })}
 
-        {/* the agreement / reconciled band */}
-        {band && band[1] > band[0] && (
-          <div style={{ position: 'absolute', top: 9, left: `${band[0] * 100}%`, width: `${(band[1] - band[0]) * 100}%`, height: 16,
-            borderRadius: 999, background: bandCol, boxShadow: `0 0 0 3px color-mix(in srgb, ${bandCol} 22%, transparent)`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-            transition: 'left .5s cubic-bezier(.22,1,.36,1), width .5s cubic-bezier(.22,1,.36,1), background .3s ease' }}>
-            {showOverlapLabel && <span style={{ fontSize: 8.5, fontWeight: 800, color: DS.ink, letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>OVERLAP</span>}
-          </div>
-        )}
-
-        {/* suggested meet-point marker (only while the conflict is open) */}
-        {conflict && !resolved && (
-          <div style={{ position: 'absolute', top: 2, bottom: 2, left: `calc(${base.meet * 100}% - 1px)`, width: 2,
-            background: DS.alert, borderRadius: 999 }}>
-            <div style={{ position: 'absolute', top: -3, left: '50%', transform: 'translateX(-50%) rotate(45deg)', width: 8, height: 8, background: DS.alert, borderRadius: 2 }} />
+        {/* the cursor. Orchid and grabbable while it still needs deciding; calm ink
+            once settled, marking where the walk landed. Absent on an axis you already
+            agree on, and on one you left out — neither has a spot to point at. */}
+        {conflict && cursorAt != null && (
+          <div style={{ position: 'absolute', zIndex: 2, top: 0, bottom: 0, left: `calc(${cursorAt * 100}% - 1px)`, width: 2,
+            background: settled ? 'var(--ink)' : DS.alert, borderRadius: 999,
+            transition: drag != null ? 'none' : 'left .25s ease, background .3s ease' }}>
+            <div style={{ position: 'absolute', top: -5, left: '50%', transform: 'translateX(-50%) rotate(45deg)',
+              width: drag != null ? 16 : 12, height: drag != null ? 16 : 12,
+              background: settled ? 'var(--ink)' : DS.alert, borderRadius: 3,
+              border: '2px solid var(--card)',
+              boxShadow: canDrag ? `0 0 0 3px color-mix(in srgb, ${DS.alert} 22%, transparent)` : 'none',
+              transition: 'width .15s ease, height .15s ease, background .3s ease' }} />
           </div>
         )}
       </div>
 
-      {/* reconciliation caption + action — only for conflict axes */}
+      {/* Who is off the line, and why. Without this an absence reads as a bug, or as
+          having been overruled — when in fact they said this one doesn't matter to them. */}
+      {quiet.length > 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.3, color: 'var(--ink-faint)' }}>
+          {quiet.map(nameOf).join(' · ')} {quiet.length > 1 ? 'have' : 'has'} no preference here
+        </div>
+      )}
+
+      {/* caption + actions — only for conflict axes. Actions are named on the GROUP's
+          side, never on one person's: the app must not write that Sora conceded when
+          nobody touched Sora's phone. */}
       {conflict && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 7 }}>
-          <span style={{ fontSize: 11.5, lineHeight: 1.35, color: resolved ? 'var(--good)' : 'var(--ink-soft)' }}>
-            {resolved
-              ? `${outName} met the group halfway`
-              : <React.Fragment>No common ground — <b style={{ color: 'var(--ink)' }}>{outName}</b> leans {leanWord.toLowerCase()}</React.Fragment>}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 7, flexWrap: 'wrap' }}>
+          <span style={{ flex: '1 1 130px', fontSize: 11.5, lineHeight: 1.35,
+            color: settled ? 'var(--good)' : pending ? 'var(--ink)' : 'var(--ink-soft)' }}>
+            {settled ? settledLine()
+              : pending ? pendingLine()
+                : <React.Fragment>No common ground — <b style={{ color: 'var(--ink)' }}>{nameOf(axis.outlier)}</b> leans {String(leanWord).toLowerCase()}. Drag the ◆ to pick a spot.</React.Fragment>}
           </span>
-          <button onClick={() => onToggle(axis.id)}
-            style={{ flex: '0 0 auto', cursor: 'pointer', borderRadius: 999, padding: '6px 12px', fontFamily: t.fontUI,
-              fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', transition: 'all .2s ease',
-              border: resolved ? '1.5px solid var(--line-strong)' : 'none',
-              background: resolved ? 'transparent' : DS.alert,
-              color: resolved ? 'var(--ink-soft)' : '#fff' }}>
-            {resolved ? '✓ undo' : `Nudge ${outName} →`}
-          </button>
+          <span style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
+            {settled && <AxisBtn onClick={() => onClear(axis.id)}>✓ undo</AxisBtn>}
+            {pending && (
+              <React.Fragment>
+                <AxisBtn kind="accept" onClick={() => onAccept(axis.id)}
+                  title="Only the person being asked should tap this">{axis.asks === me ? 'You accept' : `${nameOf(axis.asks)} accepts`}</AxisBtn>
+                <AxisBtn onClick={() => onCounter(axis.id, axis.asks)}
+                  title="Hand the marker over so they can offer a different spot">Counter</AxisBtn>
+              </React.Fragment>
+            )}
+            {!settled && !pending && (
+              /* The one-tap option, next to dragging the cursor yourself. A PAIR has no
+                 majority to lean toward, and a midpoint between two opposite tastes is a
+                 place neither of them asked for — so their offer is to leave the axis
+                 out. With three or more, the zone the others already share IS the
+                 majority's, so meeting in it leans toward where most of them are. */
+              <AxisBtn kind="primary" onClick={() => onPropose(axis.id, { how: pairMode ? 'drop' : 'middle', by: me, status: 'proposed' })}>
+                {pairMode ? 'Leave it out' : 'Meet in the middle'}
+              </AxisBtn>
+            )}
+          </span>
         </div>
       )}
     </div>);
@@ -198,27 +218,89 @@ function AxisRow({ axis, memberIds, memberMap, nudged, onToggle }) {
 
 function GroupScreen({ go }) {
   const t = React.useContext(ThemeCtx);
-  // Real group: me + the friends toggled to join, rebuilt live as friends change.
-  const [data, setData] = React.useState(buildGroupData);
+  // Everything on this screen is derived from persisted state (declared levels,
+  // slider positions, joining friends, settlements), so one counter is enough to
+  // re-read it after any change — including changes made on another screen.
+  const [rev, bump] = React.useState(0);
   React.useEffect(() => {
-    const on = () => setData(buildGroupData());
+    const on = () => bump(x => x + 1);
     window.addEventListener('seoulwalk:friends', on);
-    return () => window.removeEventListener('seoulwalk:friends', on);
+    window.addEventListener('seoulwalk:prefs', on);
+    // 'seoulwalk:walk' is the other phones talking: the poll fires it whenever the
+    // shared negotiation's version moves, which is what makes an offer made over
+    // there appear over here.
+    window.addEventListener('seoulwalk:walk', on);
+    return () => {
+      window.removeEventListener('seoulwalk:friends', on);
+      window.removeEventListener('seoulwalk:prefs', on);
+      window.removeEventListener('seoulwalk:walk', on);
+    };
   }, []);
-  const { people, memberIds, memberMap, axes } = data;
-  const [nudges, setNudges] = usePersist('group.nudges', {});
-  const toggle = id => setNudges(n => ({ ...n, [id]: !n[id] }));
 
-  const soloOnly = people.length <= 1;   // just me — nobody toggled to join yet
-  // how many axes are settled vs still need reconciling?
-  const conflicts = soloOnly ? [] : axes.filter(a => mergeAxis(a.ranges, memberIds).kind !== 'common');
-  const openCount = conflicts.filter(a => !nudges[a.id]).length;
-  const allSettled = openCount === 0;
+  const me = window.myMemberId();
+  const gt = React.useMemo(() => window.groupTarget(), [rev]);      // eslint-disable-line react-hooks/exhaustive-deps
+  const soloOnly = !gt.group;                                        // nobody toggled to join yet
+  // Walking solo there is no negotiation to report, but the header still shows who's
+  // here — buildGroupMembers always yields at least me.
+  const members = gt.members || window.buildGroupMembers();
+  const memberIds = members.map(m => m.id);
+  const memberMap = Object.fromEntries(members.map(m => [m.id, m]));
+  const pairMode = memberIds.length <= 2;
+  const nameOf = id => (memberMap[id] ? memberMap[id].name : 'someone');
 
-  // Real streets ranked for the blended group taste (same recommender as the map).
-  const groupVec = React.useMemo(
-    () => (window.mergeTasteVectors ? window.mergeTasteVectors(people.map(p => p.vec)) : {}), [data]);
-  const recs = useRecommendations(groupVec, 6);
+  // Axes nobody declared anything on ask nothing of the group, so they don't get to
+  // take the same visual space as a real disagreement — they fold to the bottom.
+  const allAxes = gt.axes || [];
+  const liveAxes = allAxes.filter(a => !a.idle || a.applied);
+  const idleAxes = allAxes.filter(a => a.idle && !a.applied);
+  const openAxes = liveAxes.filter(a => a.conflict && !a.applied && !a.pending);
+  const waitingAxes = liveAxes.filter(a => a.pending);
+  const unresolved = openAxes.length + waitingAxes.length;
+
+  // Real streets ranked for the group's agreed target — the SAME value the map ranks
+  // on, so this list and the map can't tell different stories.
+  const recs = useRecommendations(gt.target, 6);
+
+  // A trade needs two disagreements still on the table.
+  const trade = React.useMemo(
+    () => (gt.axes ? window.proposeTrade(gt.axes, memberIds) : null), [rev]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const axisLabel = id => { const a = allAxes.find(x => x.id === id); return a ? `${a.left} ↔ ${a.right}` : id; };
+  const poleFor = (axisId, memberId) => {
+    const a = allAxes.find(x => x.id === axisId);
+    if (!a) return '';
+    const r = a.ranges[memberId] || [0, 1];
+    return (r[0] + r[1]) / 2 >= 0.5 ? a.right : a.left;
+  };
+
+  function propose(axisId, s) {
+    window.setSettlement(axisId, s);
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_propose', { axis: axisId, how: s.how, by: s.by, value: s.value });
+  }
+  function accept(axisId) {
+    const asked = (window.readSettlements()[axisId] || {});
+    window.agreeSettlement(axisId);
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_accept', { axis: axisId, how: asked.how, by: asked.by });
+  }
+  function counter(axisId, asks) {
+    window.counterSettlement(axisId, asks);
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_counter', { axis: axisId, turn: asks });
+  }
+  function clear(axisId) {
+    window.clearSettlement(axisId);
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_unsettle', { axis: axisId });
+  }
+  function offerTrade() {
+    if (!trade) return;
+    const deal = 'd' + trade[0].axis + '_' + trade[1].axis;
+    trade.forEach(part => window.setSettlement(part.axis,
+      { how: 'trade', winner: part.winner, other: part.other, deal, by: me, status: 'proposed' }));
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_propose_trade', { deal, parts: trade });
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '6px 22px 18px', minHeight: 0 }}>
@@ -227,7 +309,7 @@ function GroupScreen({ go }) {
 
       {/* avatars + invite */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        {people.map((p) =>
+        {members.map((p) =>
         <div key={p.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             <Avatar p={p} size={46} />
             <span style={{ fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600 }}>{p.name}</span>
@@ -251,32 +333,77 @@ function GroupScreen({ go }) {
         </div>
       ) : (
         <React.Fragment>
-          {/* merge status + overlap bands */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, marginBottom: 12 }}>
+          {/* merge status. The badge counts DISAGREEMENTS, not steps, and the line
+              below says plainly what happens to the ones left open. */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, marginBottom: 6 }}>
             <Label>Where your tastes overlap</Label>
             <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 999, padding: '5px 10px', whiteSpace: 'nowrap',
-              color: allSettled ? DS.ink : '#fff',
-              background: allSettled ? DS.safe : DS.alert }}>
-              {allSettled ? 'All aligned ✓' : `${openCount} need${openCount === 1 ? 's' : ''} a nudge`}
+              color: unresolved === 0 ? DS.ink : '#fff',
+              background: unresolved === 0 ? DS.safe : DS.alert }}>
+              {unresolved === 0 ? 'All agreed ✓'
+                : `${unresolved} disagreement${unresolved > 1 ? 's' : ''}`}
             </span>
           </div>
+          <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.45, color: 'var(--ink-soft)' }}>
+            {unresolved === 0
+              ? 'Every dimension has a zone you all hold. The walk is built from those zones.'
+              : <React.Fragment>
+                  {waitingAxes.length > 0 && <React.Fragment><b style={{ color: 'var(--ink)' }}>{waitingAxes.length} offer{waitingAxes.length > 1 ? 's' : ''} waiting to be accepted</b> — an offer changes nothing until it is. </React.Fragment>}
+                  Go anyway and the {unresolved === 1 ? 'unsettled one falls' : `${unresolved} unsettled ones fall`} back to
+                  {pairMode ? ' where you two overlap least badly' : ' where most of you already agree'} — nobody has agreed to that.
+                </React.Fragment>}
+          </p>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18, margin: '0 -2px', padding: '2px 2px 0' }}>
-            {axes.map((a) => <AxisRow key={a.id} axis={a} memberIds={memberIds} memberMap={memberMap} nudged={!!nudges[a.id]} onToggle={toggle} />)}
+            {liveAxes.map((a) => <AxisRow key={a.id} axis={a} me={me} memberIds={memberIds} memberMap={memberMap}
+              pairMode={pairMode} onPropose={propose} onAccept={accept} onCounter={counter} onClear={clear} />)}
+
+            {liveAxes.length === 0 && (
+              <div style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+                None of you has declared a preference yet — the walk is wide open. Set some in your profile to shape it.
+              </div>
+            )}
+
+            {/* Trade: swap two disagreements instead of watering both down. Each side
+                gets one dimension exactly their way and gives up the other. */}
+            {trade && (
+              <div style={{ padding: '13px 15px', borderRadius: 16, border: `1.5px solid ${DS.friends}55`,
+                background: `color-mix(in srgb, ${DS.friends} 7%, var(--card))` }}>
+                <div style={{ fontFamily: t.fontMono, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
+                  color: 'var(--ink-faint)', marginBottom: 7 }}>Or trade instead of compromising</div>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.5, marginBottom: 10 }}>
+                  <b style={{ color: 'var(--ink)' }}>{nameOf(trade[0].winner)}</b> takes <b style={{ color: 'var(--ink)' }}>{poleFor(trade[0].axis, trade[0].winner)}</b> ({axisLabel(trade[0].axis)}),
+                  {' '}<b style={{ color: 'var(--ink)' }}>{nameOf(trade[1].winner)}</b> takes <b style={{ color: 'var(--ink)' }}>{poleFor(trade[1].axis, trade[1].winner)}</b> ({axisLabel(trade[1].axis)}).
+                  {' '}Each of you gets one exactly your way, and gives up the other — instead of both being watered down.
+                </div>
+                <AxisBtn kind="primary" onClick={offerTrade}>Propose this trade</AxisBtn>
+              </div>
+            )}
+
+            {/* axes nobody cares about — present, but folded and quiet */}
+            {idleAxes.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 2 }}>
+                <span style={{ fontFamily: t.fontMono, fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Doesn't matter to any of you</span>
+                {idleAxes.map(a => (
+                  <span key={a.id} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-faint)',
+                    border: '1px dashed var(--line-strong)', borderRadius: 999, padding: '4px 10px' }}>{a.left} ↔ {a.right}</span>
+                ))}
+              </div>
+            )}
 
             {/* legend of who's who + what the marker means */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, paddingTop: 2 }}>
-              {people.map((p) =>
+              {members.map((p) =>
               <span key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600 }}>
                   <span style={{ width: 14, height: 4, borderRadius: 999, background: p.hue }} /> {p.name}
                 </span>
               )}
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600 }}>
-                <span style={{ width: 8, height: 8, transform: 'rotate(45deg)', borderRadius: 2, background: DS.alert }} /> suggested meet-point
+                <span style={{ width: 8, height: 8, transform: 'rotate(45deg)', borderRadius: 2, background: DS.alert }} /> drag to choose the spot
               </span>
             </div>
 
-            {/* streets ranked for the blended group taste */}
+            {/* streets ranked for the group's agreed target */}
             <div style={{ paddingTop: 6 }}>
               <Label style={{ marginBottom: 10 }}>Streets for the group</Label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -299,8 +426,13 @@ function GroupScreen({ go }) {
             </div>
           </div>
 
-          <div style={{ paddingTop: 14 }}>
-            <PrimaryBtn onClick={() => go('map2')}>{allSettled ? 'Find our spot' : 'Find our spot anyway'}</PrimaryBtn>
+          <div style={{ paddingTop: 14, display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {unresolved > 0 && (
+              <span style={{ fontSize: 11, textAlign: 'center', color: 'var(--ink-faint)', lineHeight: 1.35 }}>
+                Leaves {unresolved} disagreement{unresolved > 1 ? 's' : ''} unsettled · you can come back and settle {unresolved > 1 ? 'them' : 'it'} while walking
+              </span>
+            )}
+            <PrimaryBtn onClick={() => go('map2')}>{unresolved === 0 ? 'Find our spot' : 'Find our spot anyway'}</PrimaryBtn>
           </div>
         </React.Fragment>
       )}

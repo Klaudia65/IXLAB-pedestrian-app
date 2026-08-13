@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wander mode — responsive heat cloud sketch</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --land:#DFF1F1; --land2:#CDE9E9; --card:#FFFFFF; --card2:#EAF7F7;
+    --ink:#143229; --ink-soft:#255A4B; --ink-faint:#5E8A7C;
+    --accent:#4456FF; --park:#A6FFE8; --good:#34C38F;
+    --heat-core:#FFE873; --heat-inner:#FFC24D; --heat-mid:#FF9A3D; --heat-edge:#FF6A1F;
+    --line:#DCE9E5;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(160deg,#F4FAF9,#E7F3F1 60%,#DDEFEE);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;color:var(--ink);}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 22px 40px;display:grid;grid-template-columns:390px 1fr;gap:34px;align-items:start}
+  @media (max-width:900px){.wrap{grid-template-columns:1fr;gap:24px}}
+
+  h1{font-size:23px;line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{font-size:13.5px;color:var(--ink-soft);line-height:1.55;margin:0 0 18px;max-width:56ch}
+  .kicker{font-size:10.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 8px}
+
+  /* ---------- phone ---------- */
+  .phone{width:390px;height:788px;border-radius:40px;background:#0d211b;padding:11px;
+    box-shadow:0 30px 70px rgba(20,50,41,.28),0 2px 0 rgba(255,255,255,.5) inset;position:sticky;top:24px}
+  .screen{position:relative;width:100%;height:100%;border-radius:30px;overflow:hidden;background:var(--land)}
+  #map{position:absolute;inset:0}
+  .maplibregl-ctrl-attrib{font-size:9px;opacity:.6}
+
+  /* mode badge */
+  .badge{position:absolute;top:14px;left:14px;z-index:6;display:flex;align-items:center;gap:6px;
+    background:rgba(255,255,255,.93);backdrop-filter:blur(10px);border-radius:999px;padding:6px 11px 6px 9px;
+    box-shadow:0 4px 16px rgba(20,50,41,.14);font-size:10px;font-weight:800;letter-spacing:.07em;white-space:nowrap}
+  .badge .dot{width:8px;height:8px;border-radius:50%}
+
+  /* counters */
+  .counters{position:absolute;top:14px;right:14px;z-index:6;display:flex;gap:6px;transition:opacity .3s}
+  .cnt{background:rgba(255,255,255,.93);backdrop-filter:blur(10px);border-radius:11px;padding:5px 7px;
+    box-shadow:0 4px 16px rgba(20,50,41,.14);text-align:center;min-width:42px}
+  .cnt b{display:block;font-size:14px;line-height:1.1;font-variant-numeric:tabular-nums}
+  .cnt span{display:block;font-size:8.5px;font-weight:700;letter-spacing:.07em;color:var(--ink-faint);text-transform:uppercase;margin-top:2px}
+
+  /* street card on tap */
+  .street-card{position:absolute;left:14px;right:14px;bottom:78px;z-index:7;background:rgba(255,255,255,.96);
+    backdrop-filter:blur(14px);border-radius:18px;padding:14px 15px;box-shadow:0 12px 34px rgba(20,50,41,.2);
+    transform:translateY(14px);opacity:0;pointer-events:none;transition:all .28s cubic-bezier(.22,1,.36,1)}
+  .street-card.on{transform:none;opacity:1;pointer-events:auto}
+  .street-card h4{margin:0 0 5px;font-size:15.5px}
+  .street-card p{margin:0;font-size:12px;line-height:1.5;color:var(--ink-soft)}
+  .street-card .x{position:absolute;top:10px;right:11px;border:none;background:var(--card2);color:var(--ink-faint);
+    width:21px;height:21px;border-radius:50%;cursor:pointer;font-size:12px;line-height:1}
+
+  /* fork card */
+  .fork{position:absolute;left:12px;right:12px;bottom:70px;z-index:8;background:rgba(255,255,255,.97);
+    backdrop-filter:blur(16px);border-radius:22px;padding:14px;box-shadow:0 16px 40px rgba(20,50,41,.24);
+    transform:translateY(22px) scale(.98);opacity:0;pointer-events:none;transition:all .34s cubic-bezier(.22,1,.36,1)}
+  .fork.on{transform:none;opacity:1;pointer-events:auto}
+  .fork .ttl{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:10px}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .opt{border:1.5px solid var(--line);border-radius:15px;overflow:hidden;cursor:pointer;background:var(--card);
+    text-align:left;padding:0;font-family:inherit;transition:all .2s}
+  .opt:hover{border-color:var(--heat-mid);transform:translateY(-2px)}
+  .pov{height:74px;display:flex;align-items:flex-end;justify-content:flex-start;padding:7px;
+    background:linear-gradient(150deg,#9FB8AE,#6E8F84 55%,#4E6E64);position:relative}
+  .pov.b{background:linear-gradient(150deg,#C8B69C,#A8907A 55%,#7E6A58)}
+  .pov em{font-style:normal;font-size:8px;font-weight:800;letter-spacing:.1em;color:rgba(255,255,255,.82);
+    background:rgba(0,0,0,.22);padding:2px 6px;border-radius:999px}
+  .opt .nm{padding:8px 9px 3px;font-size:13px;font-weight:800}
+  .opt .ph{padding:0 9px 10px;font-size:10.5px;line-height:1.4;color:var(--ink-soft)}
+  .ghost{display:block;width:100%;margin-top:9px;border:none;background:transparent;color:var(--ink-faint);
+    font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;padding:3px}
+
+  /* bottom bar inside phone */
+  .bottombar{position:absolute;left:0;right:0;bottom:0;z-index:6;height:62px;display:flex;align-items:center;
+    gap:8px;padding:0 13px;background:linear-gradient(to top,rgba(255,255,255,.96),rgba(255,255,255,.72) 70%,transparent);
+    backdrop-filter:blur(8px)}
+  .pill{border:none;border-radius:999px;padding:10px 14px;font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;
+    box-shadow:0 4px 14px rgba(20,50,41,.14);transition:all .2s}
+  .pill.primary{background:var(--ink);color:#fff}
+  .pill.soft{background:rgba(255,255,255,.95);color:var(--ink-soft);border:1px solid var(--line);box-shadow:none;font-size:11.5px}
+
+  /* summary sheet */
+  .sheet{position:absolute;inset:0;z-index:9;background:rgba(255,255,255,.97);backdrop-filter:blur(20px);
+    padding:26px 22px;overflow-y:auto;transform:translateY(100%);transition:transform .42s cubic-bezier(.22,1,.36,1)}
+  .sheet.on{transform:none}
+  .sheet h3{margin:0 0 3px;font-size:21px;letter-spacing:-.01em}
+  .sheet .lead{font-size:12.5px;color:var(--ink-soft);margin:0 0 18px}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:20px}
+  .stat{background:var(--card2);border-radius:15px;padding:12px 6px;text-align:center}
+  .stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+  .stat span{font-size:8.2px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-faint)}
+  .slist{list-style:none;padding:0;margin:0 0 18px}
+  .slist li{padding:10px 0;border-bottom:1px solid var(--line)}
+  .slist b{font-size:13.5px}
+  .slist .new{font-size:8.5px;font-weight:800;letter-spacing:.08em;background:var(--good);color:#fff;
+    border-radius:999px;padding:2px 6px;margin-left:7px;vertical-align:2px}
+  .slist p{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:var(--ink-soft)}
+
+  /* ---------- right panel ---------- */
+  .panel{padding-top:6px}
+  .ctrls{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px 17px;margin-bottom:20px;
+    box-shadow:0 6px 22px rgba(20,50,41,.06)}
+  .seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--card2);border-radius:14px;padding:5px;margin-bottom:14px}
+  .seg button{border:none;background:transparent;border-radius:10px;padding:10px 8px;font-family:inherit;font-size:12.5px;
+    font-weight:800;color:var(--ink-faint);cursor:pointer;transition:all .2s;line-height:1.3}
+  .seg button small{display:block;font-size:9.5px;font-weight:700;opacity:.75;margin-top:2px}
+  .seg button.on{background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(20,50,41,.12)}
+  .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .row .pill.primary{box-shadow:none}
+  input[type=range]{flex:1;min-width:130px;accent-color:var(--accent)}
+  .hint{font-size:11.5px;color:var(--ink-faint);margin-top:11px;line-height:1.5}
+
+  .moves{list-style:none;padding:0;margin:0}
+  .moves li{display:grid;grid-template-columns:26px 1fr;gap:12px;padding:13px 0;border-top:1px solid var(--line)}
+  .moves .n{width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:11.5px;font-weight:800;
+    display:flex;align-items:center;justify-content:center}
+  .moves h4{margin:2px 0 4px;font-size:14px}
+  .moves p{margin:0;font-size:12.5px;line-height:1.55;color:var(--ink-soft)}
+  .moves code{background:var(--card2);border-radius:5px;padding:1px 5px;font-size:11px}
+  .note{background:var(--card2);border-radius:16px;padding:14px 16px;font-size:12.5px;line-height:1.6;color:var(--ink-soft);margin-top:20px}
+  .note b{color:var(--ink)}
+  .toast{position:absolute;left:12px;right:12px;bottom:70px;z-index:10;background:var(--ink);color:#fff;border-radius:14px;
+    padding:11px 13px;font-size:11.5px;line-height:1.5;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none}
+  .toast.on{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ PHONE ============ -->
+  <div class="phone">
+    <div class="screen">
+      <div id="map"></div>
+
+      <div class="badge"><span class="dot" id="badgeDot"></span><span id="badgeTxt">STATIC</span></div>
+
+      <div class="counters" id="counters">
+        <div class="cnt"><b id="cM">0</b><span>metres</span></div>
+        <div class="cnt"><b id="cS">0</b><span>streets</span></div>
+        <div class="cnt"><b id="cN">0</b><span>new</span></div>
+      </div>
+
+      <div class="street-card" id="scard">
+        <button class="x" onclick="hideCard()">×</button>
+        <h4 id="scName"></h4>
+        <p id="scDesc"></p>
+      </div>
+
+      <div class="fork" id="fork">
+        <div class="ttl">Two ways from here</div>
+        <div class="opts">
+          <button class="opt" onclick="chooseFork(0)">
+            <div class="pov"><em>POV PHOTO</em></div>
+            <div class="nm" id="fkA"></div><div class="ph" id="fpA"></div>
+          </button>
+          <button class="opt" onclick="chooseFork(1)">
+            <div class="pov b"><em>POV PHOTO</em></div>
+            <div class="nm" id="fkB"></div><div class="ph" id="fpB"></div>
+          </button>
+        </div>
+        <button class="ghost" onclick="dismissFork()">neither — keep wandering</button>
+      </div>
+
+      <div class="toast" id="toast"></div>
+
+      <div class="bottombar">
+        <button class="pill primary" id="playBtn" onclick="togglePlay()">▶ Walk</button>
+        <button class="pill soft" id="endBtn" onclick="endWander()">End walk</button>
+        <button class="pill soft" onclick="showToast('Always visible. The hypothesis is that people wander <b>further</b> when the exit is in sight — the safety net is what licenses the risk.')">Route instead</button>
+      </div>
+
+      <div class="sheet" id="sheet">
+        <h3>That was your wander.</h3>
+        <p class="lead">Closure is what turns wandering into something you did, rather than something you failed to finish.</p>
+        <div class="stats">
+          <div class="stat"><b id="sM">0</b><span>metres</span></div>
+          <div class="stat"><b id="sT">0</b><span>minutes</span></div>
+          <div class="stat"><b id="sN">0</b><span>new streets</span></div>
+        </div>
+        <div class="kicker">What you walked through</div>
+        <ul class="slist" id="slist"></ul>
+        <button class="pill primary" style="width:100%" onclick="closeSheet()">Back to the map</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PANEL ============ -->
+  <div class="panel">
+    <p class="kicker">Sketch · Jongno pilot · real street-character data</p>
+    <h1>Wander mode, made responsive</h1>
+    <p class="sub">Same yellow cloud, same streets, same data as <code>realmap.jsx</code> — the only thing that changes is
+      whether the map <em>reacts to where you are</em>. Flip between the two and watch how quickly the static
+      version stops having anything to say.</p>
+
+    <div class="ctrls">
+      <div class="seg">
+        <button id="mStatic" class="on" onclick="setMode('static')">Today · static<small>cloud drawn once, never changes</small></button>
+        <button id="mLive" onclick="setMode('live')">Proposed · responsive<small>warms ahead, cools behind</small></button>
+      </div>
+      <div class="row">
+        <button class="pill primary" onclick="togglePlay()" id="playBtn2">▶ Walk</button>
+        <input type="range" id="scrub" min="0" max="100" value="0" oninput="scrubTo(this.value)">
+        <button class="pill soft" onclick="resetWalk()">Reset</button>
+      </div>
+      <p class="hint">Drag the slider to scrub along the walk by hand — that's the fastest way to feel the difference.
+        Tap any warm street on the map to read its real description.</p>
+    </div>
+
+    <p class="kicker">The five moves</p>
+    <ul class="moves">
+      <li><div class="n">1</div><div><h4>It has a start</h4>
+        <p>Wander is entered on purpose, next to “Walks joining your streets” — two peers, not a step and a not-step.
+          Ambiguity you chose is anticipation; ambiguity you defaulted into is doubt.</p></div></li>
+      <li><div class="n">2</div><div><h4>The cloud breathes</h4>
+        <p>Only streets within reach warm up; the ones behind you cool into a walked trace. Everything else stays a
+          faint dotted hint, so you can feel there is more without being told where. This is the move that stops the
+          map going silent — and it costs you nothing, the GPS watch in <code>app.jsx</code> already publishes the fixes.</p></div></li>
+      <li><div class="n">3</div><div><h4>It answers only the question in front of you</h4>
+        <p>No route, no turn-by-turn — but at a fork, two photos and two words. Local, timely, and ignorable:
+          “neither — keep wandering” has to be a real option or it isn’t under-navigation, it’s navigation with fewer words.</p></div></li>
+      <li><div class="n">4</div><div><h4>It can end</h4>
+        <p>Distance, streets, and how many were new to you. Without a terminal state there is no way to have wandered
+          <em>correctly</em>, and an experience you can’t complete reads as one you got stuck in.</p></div></li>
+      <li><div class="n">5</div><div><h4>The exit stays visible</h4>
+        <p>“Give me a route” never disappears. Counter-intuitively this should <em>increase</em> tolerance for ambiguity —
+          worth measuring as its own condition.</p></div></li>
+    </ul>
+
+    <div class="note">
+      <b>As a study condition.</b> These three states are separable and you can run them against each other with one
+      prototype: <b>defined route</b> (today’s route view) · <b>responsive wander</b> (this) · <b>static wander</b>
+      (today’s yellow). If the static one gets rated broken and the responsive one doesn’t, you’ve shown that the
+      malfunction reading comes from unresponsiveness, not from vagueness — which is the claim worth publishing,
+      because it contradicts the usual framing of guidance as a single dial.
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = {"streets": [{"name": "계동", "desc": "북촌 계동 일대의 골목길로, 오래된 한옥과 현대적인 건물이 어우러진 사이로 카페와 작은 밥집이 이어져 걷기 좋다.", "descEn": "An alley in the Gyedong area of Bukchon where old hanok and modern buildings sit side by side, lined with cafés and small eateries and pleasant to walk.", "why": "계동길, 도토리가든, 담솥", "headline": false, "lines": [[[126.98672, 37.57989], [126.98735, 37.57992], [126.98768, 37.57994], [126.9877, 37.57988], [126.98769, 37.57963], [126.98769, 37.57934]], [[126.98686, 37.58248], [126.98717, 37.58251], [126.98723, 37.58257], [126.98714, 37.58309]], [[126.9877, 37.57988], [126.98798, 37.57987], [126.98795, 37.58015], [126.98817, 37.58016]]]}, {"name": "계동길", "desc": "북촌의 대표적인 옛 골목길로, 언덕 위 계동교회를 중심으로 오래된 집과 현대적 건물이 어우러지고 카페와 찻집, 밥집이 늘어서 있다.", "descEn": "A signature old Bukchon lane centred on the hillside Gyedong Church, mixing old and modern houses and lined with cafés, tea houses and eateries.", "why": "도토리가든, 시노라, 담솥 안국역점", "headline": false, "lines": [[[126.98635, 37.58165], [126.98681, 37.58164]], [[126.98639, 37.58197], [126.98644, 37.58196], [126.98681, 37.58193]], [[126.98645, 37.5821], [126.98644, 37.58196]], [[126.98686, 37.58308], [126.98687, 37.58278], [126.98686, 37.58248], [126.98685, 37.58225], [126.98683, 37.58217], [126.98681, 37.58193], [126.98681, 37.58164], [126.98681, 37.58144], [126.98678, 37.58123], [126.98677, 37.58108], [126.98679, 37.58089], [126.98677, 37.58059], [126.98676, 37.58045], [126.98675, 37.58037], [126.98674, 37.58024], [126.98672, 37.57989], [126.98673, 37.57962], [126.98672, 37.57934]], [[126.98769, 37.57963], [126.98673, 37.57962]], [[126.98721, 37.58059], [126.98724, 37.58044], [126.98676, 37.58045]], [[126.98677, 37.57765], [126.98681, 37.57743], [126.98683, 37.57732], [126.98689, 37.57715]], [[126.98677, 37.58108], [126.98738, 37.58108], [126.98741, 37.58107]], [[126.98681, 37.58144], [126.98728, 37.58148], [126.98742, 37.58151], [126.98744, 37.58151], [126.98754, 37.58152]], [[126.98744, 37.58151], [126.98746, 37.5813]]]}, {"name": "남대문로", "desc": "숭례문에서 종로로 이어지는 도심의 옛 상업 간선로로, 1910년대 절충식 한옥상가와 근대 은행 건물이 남아 상업지구의 역사를 간직하고 있다.", "descEn": "An old commercial artery running from Sungnyemun to Jongno, where 1910s hybrid hanok shophouses and early-modern bank buildings preserve the district's mercantile history.", "why": "숭례문, 집회, 을지로입구역 사무실", "headline": true, "lines": [[[126.98276, 37.56868], [126.98271, 37.56863], [126.9827, 37.5686], [126.9827, 37.56801], [126.98268, 37.5675], [126.98265, 37.56691], [126.98264, 37.5668], [126.98263, 37.56673], [126.98263, 37.56663], [126.98262, 37.56651], [126.9826, 37.56622], [126.98258, 37.56605]], [[126.98275, 37.56605], [126.98276, 37.56622], [126.98275, 37.56663], [126.98276, 37.56672], [126.98276, 37.56679], [126.98277, 37.56689], [126.98279, 37.5675], [126.98281, 37.56798], [126.9828, 37.56853], [126.9828, 37.5686], [126.9828, 37.56862], [126.98276, 37.56868]], [[126.98276, 37.56868], [126.98277, 37.56874], [126.98277, 37.56876]], [[126.98278, 37.56901], [126.98278, 37.56907]]]}, {"name": "돈화문로", "desc": "창덕궁 돈화문으로 이어지는 옛 '왕의 길'로, '국악로'라 불릴 만큼 국악기 상점과 전통 한복점이 늘어서고 돈화문국악당의 한옥과 국악마당이 고즈넉한 정취를 자아낸다.", "descEn": "The old 'royal road' to Changdeokgung's Donhwamun gate; known as 'Gugak-ro', it is lined with Korean-instrument shops and hanbok stores, the Donhwamun Gugakdang hanok and music yard lending a serene mood.", "why": "한쥬얼리, 티퍼런스서울, 맛집 참돼짓간", "headline": true, "lines": [[[126.99012, 37.57736], [126.99016, 37.57724], [126.99021, 37.57713], [126.99021, 37.57707], [126.99022, 37.57704], [126.99033, 37.57667], [126.99034, 37.57666], [126.99041, 37.57642], [126.99048, 37.57619], [126.99059, 37.57576], [126.99062, 37.57566], [126.99064, 37.57559], [126.99071, 37.57536], [126.99097, 37.5745], [126.99098, 37.57445], [126.99107, 37.57416], [126.99116, 37.57386], [126.99117, 37.57381], [126.99125, 37.57356], [126.99149, 37.57282], [126.99152, 37.5727], [126.99157, 37.57257], [126.99175, 37.57201], [126.99195, 37.57137], [126.99211, 37.57081], [126.99212, 37.57073], [126.99216, 37.57052], [126.99216, 37.57047], [126.99217, 37.57044], [126.99217, 37.57042], [126.99217, 37.5704], [126.99218, 37.57036], [126.99219, 37.57033], [126.99219, 37.57029], [126.99222, 37.57], [126.99222, 37.56985], [126.99224, 37.56958], [126.99225, 37.56928], [126.99227, 37.56911], [126.99238, 37.56855]], [[126.99062, 37.57566], [126.9909, 37.5757], [126.99106, 37.57571]], [[126.99107, 37.57416], [126.99134, 37.57419], [126.99157, 37.57422]], [[126.99133, 37.56925], [126.99225, 37.56928]], [[126.99137, 37.56893], [126.9916, 37.5689], [126.99176, 37.56895], [126.99198, 37.56906], [126.99227, 37.56911]], [[126.99157, 37.57257], [126.99124, 37.57256], [126.99107, 37.57256], [126.99098, 37.57256], [126.9907, 37.57256], [126.99039, 37.57256], [126.98998, 37.57257], [126.9899, 37.57256], [126.98951, 37.57256], [126.98871, 37.57254], [126.98852, 37.57255], [126.98843, 37.57255], [126.98789, 37.57257], [126.98781, 37.57258]], [[126.98919, 37.57369], [126.98943, 37.57372], [126.98952, 37.57373], [126.98979, 37.57372], [126.99017, 37.57373], [126.99033, 37.57373], [126.99035, 37.5736], [126.99045, 37.57344], [126.99059, 37.57321], [126.99066, 37.57306], [126.99071, 37.57289]], [[126.99102, 37.57297], [126.99076, 37.57331], [126.99058, 37.57357], [126.99031, 37.57397], [126.99023, 37.57407], [126.99021, 37.57411], [126.99008, 37.5743], [126.98989, 37.57452], [126.9898, 37.57464], [126.98972, 37.57486], [126.9897, 37.5749], [126.98974, 37.57515], [126.98961, 37.57517], [126.98943, 37.57529], [126.9893, 37.5754], [126.98926, 37.57552]], [[126.98933, 37.57714], [126.98957, 37.57709], [126.98977, 37.57702], [126.9899, 37.57702], [126.99011, 37.57706], [126.99017, 37.57709]], [[126.98938, 37.57395], [126.98952, 37.57396], [126.98958, 37.57397], [126.9896, 37.57397], [126.98979, 37.57398], [126.98995, 37.574], [126.98998, 37.57401], [126.99023, 37.57407], [126.99036, 37.57415]], [[126.98954, 37.57285], [126.9895, 37.57279], [126.98951, 37.57256]], [[126.99018, 37.57605], [126.9899, 37.57599], [126.98964, 37.57594]], [[126.9899, 37.57702], [126.99012, 37.57629], [126.99018, 37.57605], [126.99032, 37.5756], [126.99054, 37.57486], [126.99062, 37.57467], [126.9907, 37.57439], [126.99073, 37.57422], [126.99077, 37.5741], [126.99088, 37.5738], [126.99092, 37.57367], [126.99094, 37.57363], [126.991, 37.57343], [126.99111, 37.57302], [126.99113, 37.5729], [126.99122, 37.57264], [126.99124, 37.57256], [126.99132, 37.57238], [126.99142, 37.57195], [126.99166, 37.57122], [126.99164, 37.57112], [126.99165, 37.57097], [126.99176, 37.57079]], [[126.99012, 37.57629], [126.98992, 37.57625]], [[126.98998, 37.57257], [126.99014, 37.57265], [126.99026, 37.5727], [126.9903, 37.57272], [126.99071, 37.57289], [126.99102, 37.57297]], [[126.99016, 37.57296], [126.99028, 37.57298]], [[126.99113, 37.5729], [126.99102, 37.57297]], [[126.99195, 37.57137], [126.99225, 37.57144], [126.99205, 37.57204], [126.99208, 37.57205], [126.99205, 37.57214], [126.99203, 37.57216], [126.99189, 37.57258]], [[126.99205, 37.57214], [126.99226, 37.5722], [126.99241, 37.57224]], [[126.99211, 37.57081], [126.99222, 37.57084], [126.99284, 37.57086], [126.99292, 37.57085], [126.9936, 37.57088], [126.99376, 37.57089]], [[126.99214, 37.5726], [126.99226, 37.5722], [126.99233, 37.57201], [126.99249, 37.57173], [126.99261, 37.57144], [126.99292, 37.57085]], [[126.99222, 37.57], [126.9927, 37.57005], [126.993, 37.57006], [126.99332, 37.57007], [126.99368, 37.57007], [126.99392, 37.57008], [126.99418, 37.57011], [126.9944, 37.5701], [126.99449, 37.57008], [126.99489, 37.57008]], [[126.99249, 37.57173], [126.99281, 37.57188]]]}, {"name": "동순라길", "desc": "창경궁과 종묘의 돌담을 따라 이어지는 고즈넉한 길로, 돌담 뷰 카페와 브런치 가게, 반지·주얼리 공방이 자리한다.", "descEn": "A serene lane along the stone walls of Changgyeonggung and Jongmyo, with wall-view cafés, brunch spots and ring- and jewellery-making studios.", "why": "일트, 일트 커피, 카페 일트", "headline": true, "lines": [[[126.99628, 37.57446], [126.99675, 37.57454], [126.99669, 37.57475]], [[126.99638, 37.57409], [126.99737, 37.57428], [126.99745, 37.5743], [126.9975, 37.57431]], [[126.99643, 37.57071], [126.99642, 37.57082], [126.99641, 37.57098], [126.99632, 37.57203], [126.99644, 37.57219], [126.99645, 37.57222], [126.99646, 37.57223], [126.99655, 37.57237], [126.99672, 37.57265], [126.99674, 37.57269], [126.99676, 37.57284], [126.99676, 37.57291], [126.99671, 37.57305], [126.9966, 37.57336], [126.99656, 37.5734], [126.99638, 37.57409], [126.99628, 37.57446], [126.99623, 37.57467], [126.9962, 37.57478], [126.99603, 37.57502], [126.99586, 37.57532], [126.99583, 37.57549], [126.99582, 37.57566], [126.99582, 37.57588], [126.99645, 37.57602]]]}, {"name": "북촌로", "desc": "북촌한옥마을을 지나는 길로, 갤러리와 떡볶이·만두 노포, 개성 있는 카페가 한옥 사이에 어우러진다.", "descEn": "The road through Bukchon Hanok Village, where galleries, old tteokbokki and dumpling eateries and characterful cafés sit among the hanok.", "why": "논픽션, 정수진, 풍년쌀농산", "headline": false, "lines": [[[126.9862, 37.57684], [126.98614, 37.5769], [126.98608, 37.57703], [126.98584, 37.57752], [126.98566, 37.57788], [126.98555, 37.57813], [126.98551, 37.57822], [126.98542, 37.57845], [126.98528, 37.5788], [126.98517, 37.57906], [126.98509, 37.5792], [126.985, 37.57926], [126.98502, 37.57938], [126.98502, 37.57962], [126.98504, 37.58007], [126.98504, 37.58016], [126.98506, 37.58061], [126.98506, 37.58097], [126.98507, 37.58126], [126.98507, 37.58146], [126.98509, 37.5818], [126.98512, 37.58255], [126.98513, 37.58281], [126.98514, 37.58334], [126.98515, 37.58368], [126.98516, 37.58405], [126.98516, 37.58424], [126.98517, 37.58432], [126.98519, 37.58502], [126.98522, 37.58515], [126.98554, 37.58585], [126.98556, 37.586], [126.98554, 37.58612], [126.98548, 37.5862], [126.9853, 37.58641], [126.98512, 37.58649], [126.98463, 37.58672], [126.98428, 37.58683], [126.98378, 37.58673], [126.98369, 37.58676], [126.98364, 37.58681]], [[126.98502, 37.57962], [126.98457, 37.57959], [126.98417, 37.5796], [126.98398, 37.5796], [126.98371, 37.57943]], [[126.98512, 37.58255], [126.98468, 37.58257]], [[126.98513, 37.58281], [126.98471, 37.58285]], [[126.98506, 37.58061], [126.98543, 37.58061], [126.98574, 37.58056], [126.98573, 37.58027]], [[126.98507, 37.58126], [126.98553, 37.58126], [126.98554, 37.58099]], [[126.98519, 37.58254], [126.98536, 37.58254], [126.98541, 37.58254], [126.98545, 37.58254], [126.98555, 37.58254]], [[126.98543, 37.58275], [126.98545, 37.58254]], [[126.98555, 37.57813], [126.98602, 37.57813]]]}, {"name": "삼일대로", "desc": "종각과 청계천 사이 골목으로, 7080 라이브바와 레트로 감성 다방, 해산물 주점이 어우러져 퇴근길 직장인들이 즐겨 찾는다.", "descEn": "An alley between Jonggak and the Cheonggyecheon, mixing a retro '70s-'80s live-music bar, an old-style tearoom and seafood pubs favoured by office workers after work.", "why": "어망집, 학사다방, 해산물", "headline": false, "lines": [[[126.98445, 37.56919], [126.98472, 37.56919], [126.98511, 37.56919], [126.98519, 37.56919], [126.98575, 37.56917], [126.9869, 37.56917], [126.98762, 37.56916]], [[126.98574, 37.56885], [126.9869, 37.56884], [126.98759, 37.56882]], [[126.98764, 37.56666], [126.9884, 37.56671], [126.98868, 37.56672], [126.98966, 37.56676]], [[126.98799, 37.57341], [126.98878, 37.57358], [126.98904, 37.57364], [126.98919, 37.57369], [126.98905, 37.57415]]]}, {"name": "서순라길", "desc": "종묘 돌담을 따라 이어지는 길로, 100년 넘은 나무가 큰 그늘을 드리우고 감성 카페와 루프탑, 힙한 야장이 어우러져 조용하면서도 멋스러운 산책로다.", "descEn": "A lane along the Jongmyo stone wall where century-old trees cast deep shade and mood cafés, rooftops and hip open-air eateries make for a quiet yet stylish walk.", "why": "돌담길 맛집, 최애였던, 맛집 최애였던", "headline": true, "lines": [[[126.99106, 37.57571], [126.99142, 37.57575]], [[126.99157, 37.57422], [126.99221, 37.57429]], [[126.99161, 37.57734], [126.99186, 37.57722]], [[126.99186, 37.57755], [126.99187, 37.57747], [126.99186, 37.57723], [126.99186, 37.57722], [126.99183, 37.57705], [126.99179, 37.5769], [126.99161, 37.57656], [126.99142, 37.57598], [126.99142, 37.57575], [126.99157, 37.57526], [126.99196, 37.57458], [126.99221, 37.57429], [126.99243, 37.57403], [126.99257, 37.57377], [126.99274, 37.57347], [126.99334, 37.57262], [126.9935, 37.5723], [126.99357, 37.57222], [126.99378, 37.57208], [126.99376, 37.57203], [126.99376, 37.57151], [126.99376, 37.57148], [126.99376, 37.57089], [126.99376, 37.57085], [126.99376, 37.57083], [126.99376, 37.57067], [126.99377, 37.57058]], [[126.9935, 37.5723], [126.99319, 37.57194], [126.99311, 37.57186]], [[126.99319, 37.57194], [126.99365, 37.5717], [126.9937, 37.57162], [126.99376, 37.57151]]]}, {"name": "수표로", "desc": "종로3가 관수동 골목으로, 1976년부터 자리를 지켜온 야장 삼겹살 노포를 비롯한 오래된 고깃집이 있다.", "descEn": "A Gwansu-dong alley in Jongno 3-ga, home to old grill houses including an open-air pork-belly institution running since 1976.", "why": "골드바, 자기앞수표, 계좌이체", "headline": false, "lines": [[[126.98951, 37.56923], [126.99033, 37.5694], [126.99043, 37.5694], [126.99076, 37.56935], [126.99109, 37.56931], [126.99121, 37.56934]], [[126.98954, 37.57285], [126.98903, 37.57286], [126.98882, 37.5728], [126.98857, 37.57267]], [[126.9895, 37.56986], [126.99038, 37.56995], [126.99095, 37.57], [126.99122, 37.57001], [126.99178, 37.57], [126.99222, 37.57]], [[126.98952, 37.57373], [126.98954, 37.57285]], [[126.991, 37.57343], [126.99083, 37.57336], [126.99076, 37.57331], [126.99059, 37.57321], [126.99017, 37.57313], [126.99017, 37.57298], [126.99016, 37.57296], [126.98993, 37.57291], [126.98978, 37.57288], [126.98958, 37.57285], [126.98954, 37.57285]], [[126.98978, 37.57288], [126.98979, 37.57372]], [[126.99017, 37.57313], [126.99017, 37.57373]], [[126.99076, 37.56935], [126.99079, 37.56947], [126.99079, 37.56976], [126.99109, 37.5698], [126.99122, 37.5698]]]}, {"name": "우정국로", "desc": "조계사와 OCI미술관을 낀 길로, 부처님오신날이면 연등이 거리를 가득 밝히는 연등행사가 펼쳐진다.", "descEn": "A street beside Jogyesa temple and the OCI Museum, where on Buddha's Birthday the Lotus Lantern festival fills the road with light.", "why": "토리고야 종로본점, 토리고야, 관철동차돌박이탄탄나베맛집", "headline": true, "lines": [[[126.98101, 37.5731], [126.98117, 37.57306], [126.98155, 37.57303], [126.98225, 37.57296], [126.98225, 37.573], [126.98299, 37.57304]], [[126.98197, 37.57333], [126.98228, 37.57329], [126.98235, 37.57334], [126.98258, 37.57337], [126.98259, 37.57347], [126.98266, 37.57348], [126.98266, 37.57355], [126.98298, 37.57358]], [[126.98228, 37.57558], [126.98252, 37.5754], [126.98289, 37.57512]], [[126.98278, 37.56907], [126.98281, 37.5692], [126.98285, 37.56953], [126.98288, 37.56966], [126.98292, 37.56991], [126.98295, 37.57006], [126.98296, 37.57015], [126.98296, 37.57021], [126.98297, 37.57027], [126.98298, 37.5704], [126.983, 37.57064], [126.98301, 37.5707], [126.98306, 37.57109], [126.98307, 37.57137], [126.98306, 37.57165], [126.98305, 37.57202], [126.98304, 37.57236], [126.983, 37.5729], [126.98299, 37.57304], [126.98298, 37.57358], [126.98297, 37.57373], [126.98296, 37.57388], [126.98292, 37.57461], [126.9829, 37.57498], [126.98289, 37.57512]], [[126.98296, 37.57563], [126.98292, 37.57555], [126.98289, 37.57547], [126.9829, 37.57541], [126.98289, 37.57532], [126.98289, 37.57512]], [[126.98292, 37.57461], [126.98241, 37.57462], [126.98242, 37.57475], [126.98243, 37.5748], [126.98245, 37.57489], [126.98249, 37.57498], [126.9829, 37.57498]], [[126.98304, 37.57236], [126.98343, 37.57243], [126.98373, 37.57254], [126.98398, 37.57263], [126.98389, 37.57282]], [[126.98306, 37.57109], [126.98411, 37.57111], [126.98434, 37.57111]], [[126.98366, 37.57271], [126.98373, 37.57254]]]}, {"name": "윤보선길", "desc": "4대 대통령 윤보선 가옥에서 이름을 딴 길로, 담장 사이로 한옥과 전통이 어우러지고 자그마한 카페와 갤러리가 인사동의 정취를 잇는 조용한 산책로다.", "descEn": "A street named after the house of President Yun Bo-seon, a quiet walking lane where hanok and tradition meet between garden walls and small cafés and galleries carry over the mood of Insadong.", "why": "티테라피, 종로서적, 카페 이드라", "headline": true, "lines": [[[126.98343, 37.57742], [126.98254, 37.57728]], [[126.98347, 37.57731], [126.98324, 37.57724], [126.98316, 37.57721]], [[126.9838, 37.5775], [126.98354, 37.57744], [126.98343, 37.57742]], [[126.98343, 37.57742], [126.98347, 37.57731], [126.98352, 37.57721], [126.98357, 37.57709], [126.98364, 37.57695], [126.98387, 37.57702], [126.98391, 37.57693], [126.98403, 37.57696]], [[126.98352, 37.57721], [126.9832, 37.57713], [126.98325, 37.57703], [126.98331, 37.57701], [126.98357, 37.57709]], [[126.98371, 37.57943], [126.98318, 37.57893], [126.98354, 37.57819], [126.98375, 37.57764], [126.9838, 37.5775], [126.98391, 37.57721], [126.98394, 37.57714], [126.98403, 37.57696], [126.98408, 37.57688], [126.98408, 37.57686], [126.98413, 37.57666], [126.98419, 37.57642], [126.98424, 37.57622], [126.98435, 37.57599]], [[126.98387, 37.57702], [126.98383, 37.57711], [126.98394, 37.57714]]]}, {"name": "율곡로", "desc": "종묘 궁궐 담장을 따라 걷는 서순라길 곁 골목으로, 한옥을 개조한 식당과 테라스가 있는 카페가 자리한다.", "descEn": "An alley beside Seosunra-gil, following the Jongmyo palace wall, with hanok-converted restaurants and a terraced café.", "why": "걷기 점심, 창신 구역재개발, 소개 출발", "headline": false, "lines": [[[126.99081, 37.57741], [126.99089, 37.57724], [126.99096, 37.57684], [126.99098, 37.57674], [126.99104, 37.57637], [126.99105, 37.57632], [126.99106, 37.57571], [126.99105, 37.57559], [126.99106, 37.57556], [126.99109, 37.57552], [126.99112, 37.57548], [126.99122, 37.57536], [126.99129, 37.57525], [126.99131, 37.57521], [126.99146, 37.57473], [126.99149, 37.57464], [126.99154, 37.57426], [126.99157, 37.57422], [126.99162, 37.57397], [126.99166, 37.57385], [126.99171, 37.57373], [126.99186, 37.57331], [126.99186, 37.5733], [126.99206, 37.57286], [126.99211, 37.5726]], [[126.98868, 37.57597], [126.98891, 37.57597], [126.98891, 37.5761]], [[126.98926, 37.57552], [126.98928, 37.57584], [126.98932, 37.57637], [126.98933, 37.57714], [126.98933, 37.57737]], [[126.99098, 37.57674], [126.99119, 37.57675], [126.99129, 37.57674], [126.99141, 37.57672], [126.99153, 37.57669], [126.99146, 37.57653]], [[127.00463, 37.57462], [127.00465, 37.5744]], [[127.00596, 37.57365], [127.00581, 37.57386], [127.00569, 37.57409], [127.00561, 37.57426], [127.0055, 37.5745], [127.00534, 37.57487], [127.00528, 37.57508], [127.00522, 37.57538]]]}, {"name": "을지로", "desc": "골목마다 야장이 들어찬 종로3가·을지로3가 일대의 길로, 저녁이면 고깃집과 곱창집 앞에 줄이 늘어선다.", "descEn": "A street in the Jongno 3-ga / Euljiro 3-ga area where open-air grills fill every alley, with evening queues outside the pork and gopchang joints.", "why": "맛집 다원, 다원, 다원 닭한마리", "headline": false, "lines": [[[126.99089, 37.56634], [126.99085, 37.56682], [126.99084, 37.56726], [126.99084, 37.56729], [126.99088, 37.56762], [126.99093, 37.56808]]]}, {"name": "인사동", "desc": "인사동 문화의 거리 곁 골목으로, 한옥 스테이와 오래된 닭한마리 노포 등 전통과 관광의 정취가 배어 있다.", "descEn": "An alley off the Insadong cultural street, steeped in tradition and tourism, with hanok stays and old dak-hanmari eateries.", "why": "수인, 솥내음, 인사동길", "headline": false, "lines": [[[126.98504, 37.5739], [126.9856, 37.57418], [126.98579, 37.57429], [126.98594, 37.57437], [126.98629, 37.57444], [126.98671, 37.57454], [126.987, 37.5746]], [[126.9856, 37.57418], [126.98556, 37.57421], [126.98547, 37.57431], [126.98535, 37.57449]], [[126.98629, 37.57444], [126.98609, 37.57484], [126.98643, 37.57493], [126.98642, 37.57497], [126.98676, 37.57511]]]}, {"name": "인사동길", "desc": "전통찻집과 공예품점, 100여 개의 화랑이 밀집한 서울의 대표 문화 거리로, 차 없는 거리를 따라 한옥과 골목 풍경 속에서 전통과 예술을 여유롭게 즐긴다.", "descEn": "Seoul's signature cultural street, packed with traditional tearooms, craft shops and over a hundred galleries; a car-free lane where hanok and old alleys let you take in tradition and art at leisure.", "why": "솥내음, 쌈지길, 양반댁", "headline": true, "lines": [[[126.98309, 37.57549], [126.98344, 37.57529], [126.98379, 37.57488], [126.98382, 37.57485], [126.98406, 37.57462], [126.9841, 37.57458], [126.98437, 37.57436], [126.98445, 37.57429], [126.9846, 37.57418], [126.98464, 37.57415], [126.98494, 37.57397], [126.98504, 37.5739], [126.98517, 37.5738], [126.98536, 37.57369], [126.98549, 37.57359], [126.98582, 37.57338], [126.9859, 37.57331], [126.98602, 37.5732], [126.98608, 37.57316], [126.98623, 37.57298], [126.98642, 37.57276], [126.98654, 37.57259], [126.98673, 37.57224], [126.98682, 37.57206], [126.98685, 37.57202], [126.98701, 37.57171], [126.98702, 37.57169], [126.98702, 37.57168], [126.98703, 37.57167], [126.98709, 37.57157], [126.98717, 37.57144], [126.98739, 37.57128], [126.98748, 37.57125], [126.98759, 37.57124]], [[126.98344, 37.57529], [126.98349, 37.57531], [126.98372, 37.57539], [126.98378, 37.57538], [126.98387, 37.5754]], [[126.98437, 37.57436], [126.98424, 37.57425], [126.98416, 37.57421], [126.98407, 37.57419], [126.98393, 37.57416]], [[126.98517, 37.5738], [126.98448, 37.57341], [126.98435, 37.57354]], [[126.98494, 37.57397], [126.98519, 37.57412], [126.98514, 37.57417]], [[126.98582, 37.57338], [126.98551, 37.57319], [126.98526, 37.5731]], [[126.98536, 37.57369], [126.98514, 37.57354], [126.98528, 37.57338]], [[126.98673, 37.57224], [126.98644, 37.57215], [126.98643, 37.57219], [126.98586, 37.57203], [126.98572, 37.572]], [[126.9859, 37.57331], [126.98621, 37.57353], [126.98616, 37.57358], [126.98626, 37.57364], [126.98618, 37.57375], [126.98621, 37.57377]], [[126.98642, 37.57276], [126.98678, 37.5729], [126.98682, 37.57293], [126.98693, 37.57298], [126.98704, 37.57303]], [[126.98678, 37.5729], [126.98701, 37.5726]], [[126.98685, 37.57202], [126.98756, 37.57228]]]}, {"name": "종로", "desc": "종로3가 골목에 시간이 멈춘 듯한 39년 전통의 경양식 돈가스 노포가 자리한 레트로한 길이다.", "descEn": "A retro Jongno 3-ga alley home to a 39-year-old Western-style pork-cutlet diner where time seems to have stopped.", "why": "평원숯불갈비, 엘지포차, 동대문 돼지갈비", "headline": false, "lines": [[[126.98856, 37.57018], [126.98856, 37.57014], [126.98857, 37.56984], [126.98859, 37.56966], [126.98867, 37.56931], [126.98868, 37.56923], [126.98869, 37.56916], [126.98887, 37.56829]], [[126.99554, 37.56875], [126.99547, 37.56926], [126.99541, 37.56977], [126.99538, 37.5699], [126.99538, 37.56991], [126.99535, 37.57015], [126.99531, 37.57041], [126.99531, 37.57044], [126.9953, 37.57047], [126.99528, 37.57051]], [[127.00499, 37.57246], [127.00542, 37.57279], [127.00562, 37.57263], [127.0057, 37.57257], [127.00584, 37.57245]], [[127.00504, 37.57102], [127.00504, 37.57095], [127.00506, 37.57039], [127.00505, 37.56979]], [[127.00673, 37.57039], [127.00651, 37.57035], [127.00613, 37.57029], [127.00589, 37.5703], [127.00556, 37.57032], [127.00548, 37.57032], [127.00524, 37.57038], [127.00506, 37.57039]], [[127.00524, 37.57233], [127.00562, 37.57263]]]}, {"name": "창경궁로", "desc": "광장시장과 세운상가 사이의 길로, 한복 원단과 옷감을 파는 시장 상가가 이어지고 늘 사람들로 붐빈다.", "descEn": "A street between Gwangjang Market and Sewoon Sangga, lined with market stalls selling hanbok fabric and cloth and always thick with people.", "why": "종로광장새마을금, 황금단, 팔도상회", "headline": false, "lines": [[[126.9979, 37.56973], [126.99801, 37.56975], [126.99825, 37.56978], [126.99844, 37.5698], [126.99883, 37.56985], [126.99902, 37.56987], [126.99917, 37.56988], [126.99923, 37.56988], [126.99932, 37.56988], [126.99988, 37.56989], [126.9999, 37.5699], [126.99991, 37.5699], [126.99996, 37.5699], [127.00001, 37.5699], [127.00028, 37.56991], [127.00042, 37.56992], [127.00051, 37.56993], [127.00086, 37.56997], [127.00092, 37.56998], [127.00104, 37.57], [127.00123, 37.57002]]]}, {"name": "창덕궁", "desc": "창덕궁 담장 곁 한옥마을의 길로, 궁궐을 둘러보고 들르기 좋은 한옥 맛집과 브런치 카페가 자리한다.", "descEn": "A hanok-village street beside the Changdeokgung wall, with hanok restaurants and brunch cafés handy for a stop after visiting the palace.", "why": "천하보쌈, 홍매화, 노우즈", "headline": false, "lines": [[[126.98672, 37.57934], [126.98769, 37.57934], [126.98782, 37.57934], [126.98851, 37.57931]], [[126.98928, 37.57935], [126.98865, 37.57934], [126.98851, 37.57931], [126.98863, 37.57929], [126.98928, 37.57925]]]}, {"name": "창덕궁길", "desc": "창덕궁 담장을 따라 원서동으로 이어지는 돌담 산책길로, 한옥 감성 골목에 창덕궁이 내려다보이는 카페가 자리한다.", "descEn": "A stone-wall walking lane following the Changdeokgung wall into Wonseo-dong, with hanok-mood alleys and cafés that look over the palace.", "why": "후원, 원서동, 노우즈", "headline": true, "lines": [[[126.98933, 37.57737], [126.98931, 37.5775], [126.98924, 37.57793], [126.98922, 37.57823], [126.98921, 37.5783], [126.98921, 37.57831], [126.98921, 37.57837], [126.98918, 37.57867], [126.98918, 37.5787], [126.98919, 37.57875], [126.98922, 37.57895], [126.98928, 37.57925], [126.98928, 37.57935], [126.98927, 37.58059], [126.98929, 37.58093], [126.98932, 37.58099], [126.98934, 37.58127], [126.98936, 37.58158], [126.98941, 37.58189], [126.98946, 37.58208], [126.98948, 37.58225], [126.98944, 37.58247], [126.98939, 37.58258], [126.98926, 37.58283], [126.98923, 37.58292], [126.98913, 37.58293], [126.98902, 37.58294], [126.98869, 37.58295], [126.98863, 37.58296], [126.98862, 37.58297], [126.98831, 37.58304], [126.98815, 37.58308], [126.98775, 37.58309], [126.98736, 37.5831], [126.98714, 37.58309], [126.98704, 37.58309], [126.98686, 37.58308], [126.98649, 37.58313], [126.9864, 37.58315], [126.98627, 37.58319], [126.98606, 37.58323], [126.98577, 37.58325], [126.98574, 37.58325], [126.98564, 37.58329], [126.98548, 37.58333], [126.98514, 37.58334]], [[126.98736, 37.5831], [126.98731, 37.58338]], [[126.98827, 37.57874], [126.98919, 37.57875]]]}, {"name": "피마길", "desc": "조선시대 서민들이 고관의 행차를 피해 다니던 데서 이름이 유래한 좁은 골목으로, 옛 목로술집의 자취를 이어 지금도 갈매기살·곱창 골목이 밤늦게까지 활기를 띤다.", "descEn": "A narrow alley named for how commoners once slipped past noble processions in the Joseon era; heir to its old taverns, it still buzzes late with skirt-meat and gopchang grill joints.", "why": "돈의동 갈매기살, 갈매기살, 말을", "headline": true, "lines": [[[126.97859, 37.57037], [126.97872, 37.57038], [126.97922, 37.57039], [126.97934, 37.57042], [126.97955, 37.57041], [126.981, 37.57039], [126.98214, 37.5704], [126.98219, 37.5704], [126.98233, 37.57042], [126.98245, 37.57044], [126.98264, 37.57049], [126.98274, 37.57057], [126.98283, 37.5707], [126.98286, 37.57081]]]}], "junctions": [{"lng": 126.98769, "lat": 37.57963, "a": "계동", "b": "계동길"}, {"lng": 126.98673, "lat": 37.57948, "a": "계동길", "b": "창덕궁"}, {"lng": 126.98686, "lat": 37.58308, "a": "계동길", "b": "창덕궁길"}, {"lng": 126.98278, "lat": 37.56904, "a": "남대문로", "b": "우정국로"}, {"lng": 126.98911, "lat": 37.57366, "a": "돈화문로", "b": "삼일대로"}, {"lng": 126.99106, "lat": 37.57571, "a": "돈화문로", "b": "서순라길"}, {"lng": 126.98933, "lat": 37.57726, "a": "돈화문로", "b": "창덕궁길"}, {"lng": 126.98371, "lat": 37.57943, "a": "북촌로", "b": "윤보선길"}, {"lng": 126.98299, "lat": 37.57548, "a": "우정국로", "b": "인사동길"}, {"lng": 126.98292, "lat": 37.57067, "a": "우정국로", "b": "피마길"}, {"lng": 126.98499, "lat": 37.57394, "a": "인사동", "b": "인사동길"}, {"lng": 126.98928, "lat": 37.57935, "a": "창덕궁", "b": "창덕궁길"}], "walk": [[126.99186, 37.57755], [126.99187, 37.57747], [126.991867, 37.57739], [126.991863, 37.57731], [126.99186, 37.57723], [126.99186, 37.57722], [126.991845, 37.577135], [126.99183, 37.57705], [126.99181, 37.576975], [126.99179, 37.5769], [126.991754, 37.576832], [126.991718, 37.576764], [126.991682, 37.576696], [126.991646, 37.576628], [126.99161, 37.57656], [126.991589, 37.576496], [126.991568, 37.576431], [126.991547, 37.576367], [126.991526, 37.576302], [126.991504, 37.576238], [126.991483, 37.576173], [126.991462, 37.576109], [126.991441, 37.576044], [126.99142, 37.57598], [126.99142, 37.575903], [126.99142, 37.575827], [126.99142, 37.57575], [126.991441, 37.57568], [126.991463, 37.57561], [126.991484, 37.57554], [126.991506, 37.57547], [126.991527, 37.5754], [126.991549, 37.57533], [126.99157, 37.57526], [126.991605, 37.575198], [126.991641, 37.575136], [126.991676, 37.575075], [126.991712, 37.575013], [126.991747, 37.574951], [126.991783, 37.574889], [126.991818, 37.574827], [126.991854, 37.574765], [126.991889, 37.574704], [126.991925, 37.574642], [126.99196, 37.57458], [126.99201, 37.574522], [126.99206, 37.574464], [126.99211, 37.574406], [126.99216, 37.574348], [126.99221, 37.57429], [126.992265, 37.574225], [126.99232, 37.57416], [126.992375, 37.574095], [126.99243, 37.57403], [126.992465, 37.573965], [126.9925, 37.5739], [126.992535, 37.573835], [126.99257, 37.57377], [126.992532, 37.573826], [126.992493, 37.573882], [126.992455, 37.573938], [126.992417, 37.573994], [126.992379, 37.57405], [126.99234, 37.574107], [126.992302, 37.574163], [126.992264, 37.574219], [126.992225, 37.574275], [126.992187, 37.574331], [126.992149, 37.574387], [126.992111, 37.574443], [126.992072, 37.574499], [126.992034, 37.574555], [126.991996, 37.574611], [126.991957, 37.574668], [126.991919, 37.574724], [126.991881, 37.57478], [126.991843, 37.574836], [126.991804, 37.574892], [126.991766, 37.574948], [126.991728, 37.575004], [126.99169, 37.57506], [126.991651, 37.575116], [126.991613, 37.575172], [126.991575, 37.575228], [126.991536, 37.575285], [126.991498, 37.575341], [126.99146, 37.575397], [126.991422, 37.575453], [126.991383, 37.575509], [126.991345, 37.575565], [126.991307, 37.575621], [126.991268, 37.575677], [126.99123, 37.575733], [126.991192, 37.575789], [126.991154, 37.575845], [126.991115, 37.575902], [126.991077, 37.575958], [126.991039, 37.576014], [126.991, 37.57607], [126.990962, 37.576126], [126.990924, 37.576182], [126.990886, 37.576238], [126.990847, 37.576294], [126.990809, 37.57635], [126.990771, 37.576406], [126.990733, 37.576462], [126.990694, 37.576519], [126.990656, 37.576575], [126.990618, 37.576631], [126.990579, 37.576687], [126.990541, 37.576743], [126.990503, 37.576799], [126.990465, 37.576855], [126.990426, 37.576911], [126.990388, 37.576967], [126.99035, 37.577023], [126.990311, 37.57708], [126.990273, 37.577136], [126.990235, 37.577192], [126.990197, 37.577248], [126.990158, 37.577304], [126.99012, 37.57736], [126.99016, 37.57724], [126.99021, 37.57713], [126.99021, 37.57707], [126.99022, 37.57704], [126.990238, 37.576978], [126.990257, 37.576917], [126.990275, 37.576855], [126.990293, 37.576793], [126.990312, 37.576732], [126.99033, 37.57667], [126.99034, 37.57666], [126.990363, 37.57658], [126.990387, 37.5765], [126.99041, 37.57642], [126.990433, 37.576343], [126.990457, 37.576267], [126.99048, 37.57619], [126.990498, 37.576118], [126.990517, 37.576047], [126.990535, 37.575975], [126.990553, 37.575903], [126.990572, 37.575832], [126.99059, 37.57576], [126.99062, 37.57566], [126.99064, 37.57559], [126.990663, 37.575513], [126.990687, 37.575437], [126.99071, 37.57536], [126.990729, 37.575299], [126.990747, 37.575237], [126.990766, 37.575176], [126.990784, 37.575114], [126.990803, 37.575053], [126.990821, 37.574991], [126.99084, 37.57493], [126.990859, 37.574869], [126.990877, 37.574807], [126.990896, 37.574746], [126.990914, 37.574684], [126.990933, 37.574623], [126.990951, 37.574561], [126.99097, 37.5745], [126.99098, 37.57445], [126.991002, 37.574377], [126.991025, 37.574305], [126.991047, 37.574233], [126.99107, 37.57416], [126.991092, 37.574085], [126.991115, 37.57401], [126.991137, 37.573935], [126.99116, 37.57386], [126.99117, 37.57381], [126.99119, 37.573748], [126.99121, 37.573685], [126.99123, 37.573622], [126.99125, 37.57356], [126.99122, 37.573619], [126.991191, 37.573677], [126.991161, 37.573736], [126.991132, 37.573794], [126.991102, 37.573853], [126.991073, 37.573912], [126.991043, 37.57397], [126.991014, 37.574029], [126.990984, 37.574088], [126.990955, 37.574146], [126.990925, 37.574205], [126.990896, 37.574263], [126.990866, 37.574322], [126.990836, 37.574381], [126.990807, 37.574439], [126.990777, 37.574498], [126.990748, 37.574556], [126.990718, 37.574615], [126.990689, 37.574674], [126.990659, 37.574732], [126.99063, 37.574791], [126.9906, 37.57485], [126.990571, 37.574908], [126.990541, 37.574967], [126.990512, 37.575025], [126.990482, 37.575084], [126.990452, 37.575143], [126.990423, 37.575201], [126.990393, 37.57526], [126.990364, 37.575318], [126.990334, 37.575377], [126.990305, 37.575436], [126.990275, 37.575494], [126.990246, 37.575553], [126.990216, 37.575612], [126.990187, 37.57567], [126.990157, 37.575729], [126.990128, 37.575787], [126.990098, 37.575846], [126.990068, 37.575905], [126.990039, 37.575963], [126.990009, 37.576022], [126.98998, 37.57608], [126.98995, 37.576139], [126.989921, 37.576198], [126.989891, 37.576256], [126.989862, 37.576315], [126.989832, 37.576374], [126.989803, 37.576432], [126.989773, 37.576491], [126.989744, 37.576549], [126.989714, 37.576608], [126.989684, 37.576667], [126.989655, 37.576725], [126.989625, 37.576784], [126.989596, 37.576842], [126.989566, 37.576901], [126.989537, 37.57696], [126.989507, 37.577018], [126.989478, 37.577077], [126.989448, 37.577136], [126.989419, 37.577194], [126.989389, 37.577253], [126.98936, 37.577311], [126.98933, 37.57737], [126.98932, 37.577435], [126.98931, 37.5775], [126.989298, 37.577572], [126.989287, 37.577643], [126.989275, 37.577715], [126.989263, 37.577787], [126.989252, 37.577858], [126.98924, 37.57793], [126.989235, 37.578005], [126.98923, 37.57808], [126.989225, 37.578155], [126.98922, 37.57823], [126.98921, 37.5783], [126.98921, 37.57831], [126.98921, 37.57837], [126.989203, 37.578445], [126.989195, 37.57852], [126.989187, 37.578595], [126.98918, 37.57867], [126.98918, 37.5787], [126.98919, 37.57875], [126.9892, 37.578817], [126.98921, 37.578883], [126.98922, 37.57895], [126.989235, 37.579025], [126.98925, 37.5791], [126.989265, 37.579175], [126.98928, 37.57925], [126.98928, 37.57935], [126.989279, 37.579415], [126.989279, 37.579481], [126.989278, 37.579546], [126.989278, 37.579611], [126.989277, 37.579676], [126.989277, 37.579742], [126.989276, 37.579807], [126.989276, 37.579872], [126.989275, 37.579937], [126.989275, 37.580003], [126.989274, 37.580068], [126.989274, 37.580133], [126.989273, 37.580198], [126.989273, 37.580264], [126.989272, 37.580329], [126.989272, 37.580394], [126.989271, 37.580459], [126.989271, 37.580525], [126.98927, 37.58059], [126.989274, 37.580658], [126.989278, 37.580726], [126.989282, 37.580794], [126.989286, 37.580862], [126.98929, 37.58093], [126.98932, 37.58099], [126.989325, 37.58106], [126.98933, 37.58113], [126.989335, 37.5812], [126.98934, 37.58127], [126.989281, 37.581313], [126.989222, 37.581356], [126.989163, 37.581399], [126.989104, 37.581442], [126.989045, 37.581485], [126.988986, 37.581529], [126.988927, 37.581572], [126.988868, 37.581615], [126.988809, 37.581658], [126.98875, 37.581701], [126.98869, 37.581744], [126.988631, 37.581787], [126.988572, 37.58183], [126.988513, 37.581873], [126.988454, 37.581916], [126.988395, 37.58196], [126.988336, 37.582003], [126.988277, 37.582046], [126.988218, 37.582089], [126.988159, 37.582132], [126.9881, 37.582175], [126.988041, 37.582218], [126.987982, 37.582261], [126.987923, 37.582304], [126.987864, 37.582347], [126.987805, 37.58239], [126.987746, 37.582434], [126.987687, 37.582477], [126.987628, 37.58252], [126.987569, 37.582563], [126.98751, 37.582606], [126.98745, 37.582649], [126.987391, 37.582692], [126.987332, 37.582735], [126.987273, 37.582778], [126.987214, 37.582821], [126.987155, 37.582865], [126.987096, 37.582908], [126.987037, 37.582951], [126.986978, 37.582994], [126.986919, 37.583037], [126.98686, 37.58308], [126.986863, 37.583005], [126.986865, 37.58293], [126.986867, 37.582855], [126.98687, 37.58278], [126.986867, 37.582705], [126.986865, 37.58263], [126.986863, 37.582555], [126.98686, 37.58248], [126.986857, 37.582403], [126.986853, 37.582327], [126.98685, 37.58225], [126.98683, 37.58217], [126.986823, 37.58209], [126.986817, 37.58201], [126.98681, 37.58193], [126.98681, 37.581857], [126.98681, 37.581785], [126.98681, 37.581713], [126.98681, 37.58164], [126.98681, 37.581573], [126.98681, 37.581507], [126.98681, 37.58144], [126.9868, 37.58137], [126.98679, 37.5813], [126.98678, 37.58123], [126.986775, 37.581155], [126.98677, 37.58108], [126.986777, 37.581017], [126.986783, 37.580953], [126.98679, 37.58089], [126.986785, 37.580815], [126.98678, 37.58074], [126.986775, 37.580665], [126.98677, 37.58059], [126.986765, 37.58052], [126.98676, 37.58045], [126.98675, 37.58037], [126.986745, 37.580305], [126.98674, 37.58024], [126.986736, 37.58017], [126.986732, 37.5801], [126.986728, 37.58003], [126.986724, 37.57996], [126.98672, 37.57989], [126.986722, 37.579822], [126.986725, 37.579755], [126.986728, 37.579687], [126.98673, 37.57962], [126.986728, 37.57955], [126.986725, 37.57948], [126.986722, 37.57941], [126.98672, 37.57934], [126.986707, 37.579278], [126.986694, 37.579215], [126.986681, 37.579152], [126.986668, 37.57909], [126.986655, 37.579028], [126.986642, 37.578965], [126.986629, 37.578902], [126.986616, 37.57884], [126.986603, 37.578778], [126.98659, 37.578715], [126.986577, 37.578653], [126.986564, 37.57859], [126.986551, 37.578527], [126.986538, 37.578465], [126.986525, 37.578403], [126.986512, 37.57834], [126.986499, 37.578277], [126.986486, 37.578215], [126.986473, 37.578153], [126.98646, 37.57809], [126.986447, 37.578027], [126.986434, 37.577965], [126.986421, 37.577903], [126.986408, 37.57784], [126.986395, 37.577777], [126.986382, 37.577715], [126.986369, 37.577652], [126.986356, 37.57759], [126.986343, 37.577527], [126.98633, 37.577465], [126.986317, 37.577402], [126.986304, 37.57734], [126.986291, 37.577278], [126.986278, 37.577215], [126.986265, 37.577152], [126.986252, 37.57709], [126.986239, 37.577027], [126.986226, 37.576965], [126.986213, 37.576902], [126.9862, 37.57684], [126.98614, 37.5769], [126.98611, 37.576965], [126.98608, 37.57703], [126.98605, 37.577091], [126.98602, 37.577152], [126.98599, 37.577214], [126.98596, 37.577275], [126.98593, 37.577336], [126.9859, 37.577398], [126.98587, 37.577459], [126.98584, 37.57752], [126.98581, 37.57758], [126.98578, 37.57764], [126.98575, 37.5777], [126.98572, 37.57776], [126.98569, 37.57782], [126.98566, 37.57788], [126.985632, 37.577942], [126.985605, 37.578005], [126.985578, 37.578068], [126.98555, 37.57813], [126.98551, 37.57822], [126.98548, 37.578297], [126.98545, 37.578373], [126.98542, 37.57845], [126.985392, 37.57852], [126.985364, 37.57859], [126.985336, 37.57866], [126.985308, 37.57873], [126.98528, 37.5788], [126.985253, 37.578865], [126.985225, 37.57893], [126.985197, 37.578995], [126.98517, 37.57906], [126.98513, 37.57913], [126.98509, 37.5792], [126.985, 37.57926], [126.98502, 37.57938], [126.98502, 37.57946], [126.98502, 37.57954], [126.98502, 37.57962], [126.985023, 37.579684], [126.985026, 37.579749], [126.985029, 37.579813], [126.985031, 37.579877], [126.985034, 37.579941], [126.985037, 37.580006], [126.98504, 37.58007], [126.98504, 37.58016], [126.985043, 37.580224], [126.985046, 37.580289], [126.985049, 37.580353], [126.985051, 37.580417], [126.985054, 37.580481], [126.985057, 37.580546], [126.98506, 37.58061]]};
+
+/* ---------------- palette ---------------- */
+const PAL = { land:'#DFF1F1', land2:'#CDE9E9', card:'#FFFFFF', card2:'#EAF7F7',
+  ink:'#143229', inkFaint:'#5E8A7C', accent:'#4456FF', park:'#A6FFE8', water:'#9FA3FF',
+  heatCore:'#FFE873', heatInner:'#FFC24D', heatMid:'#FF9A3D', heatEdge:'#FF6A1F' };
+
+const REACH = 155;        // metres — how far the cloud reveals around you
+const TOUCH = 34;         // metres — close enough to count as "walked this street"
+const FORK  = 48;         // metres — how close a junction has to be to speak up
+const STEP_MS = 230;      // one ~7 m sample per tick at 1x
+
+function metres(a,b){ return Math.hypot((a[0]-b[0])*88000,(a[1]-b[1])*111000); }
+
+/* ---------------- sample points (densified once) ---------------- */
+const SAMPLES = [];       // {lng,lat,street}
+DATA.streets.forEach(s=>{
+  s.lines.forEach(line=>{
+    for(let i=0;i<line.length-1;i++){
+      const a=line[i], b=line[i+1], d=metres(a,b), n=Math.max(1,Math.round(d/9));
+      for(let k=0;k<n;k++){ const t=k/n;
+        SAMPLES.push({lng:a[0]+(b[0]-a[0])*t, lat:a[1]+(b[1]-a[1])*t, street:s.name}); }
+    }
+    const last=line[line.length-1]; SAMPLES.push({lng:last[0],lat:last[1],street:s.name});
+  });
+});
+const STREET_BY_NAME = Object.fromEntries(DATA.streets.map(s=>[s.name,s]));
+
+/* ---------------- state ---------------- */
+let mode='static', idx=0, playing=false, timer=null;
+let visited=new Set(), chosen=new Set(), forksDone=new Set(), activeFork=null, walkedM=0;
+
+/* ---------------- map ---------------- */
+const map = new maplibregl.Map({
+  container:'map',
+  style:{ version:8, glyphs:'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources:{ omt:{ type:'vector', url:'https://tiles.openfreemap.org/planet' } },
+    layers:[
+      {id:'bg',type:'background',paint:{'background-color':PAL.land}},
+      {id:'green',type:'fill',source:'omt','source-layer':'landcover',
+        filter:['in','class','wood','grass','scrub','park'],paint:{'fill-color':PAL.park,'fill-opacity':.5}},
+      {id:'park',type:'fill',source:'omt','source-layer':'park',paint:{'fill-color':PAL.park,'fill-opacity':.4}},
+      {id:'water',type:'fill',source:'omt','source-layer':'water',paint:{'fill-color':PAL.water,'fill-opacity':.55}},
+      {id:'building',type:'fill',source:'omt','source-layer':'building',minzoom:13,
+        paint:{'fill-color':PAL.card2,'fill-outline-color':PAL.land2,'fill-opacity':.85}},
+      {id:'road-case',type:'line',source:'omt','source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{'line-cap':'round','line-join':'round'},
+        paint:{'line-color':PAL.land2,'line-width':['interpolate',['linear'],['zoom'],12,1.5,16,9,18,20]}},
+      {id:'road',type:'line',source:'omt','source-layer':'transportation',
+        filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+        layout:{'line-cap':'round','line-join':'round'},
+        paint:{'line-color':PAL.card,'line-width':['interpolate',['linear'],['zoom'],12,.6,16,6,18,14]}},
+    ]},
+  center: DATA.walk[0], zoom:15.9, attributionControl:{compact:true}
+});
+
+const EMPTY={type:'FeatureCollection',features:[]};
+const streetFC = {type:'FeatureCollection',features:DATA.streets.map(s=>({type:'Feature',
+  properties:{name:s.name}, geometry:{type:'MultiLineString',coordinates:s.lines}}))};
+
+map.on('load',()=>{
+  // faint hint of every character street — "there is more out there"
+  map.addSource('hint',{type:'geojson',data:streetFC});
+  map.addLayer({id:'hint-line',type:'line',source:'hint',
+    layout:{'line-cap':'round'},
+    paint:{'line-color':PAL.heatEdge,'line-opacity':.22,'line-width':1.6,'line-dasharray':[1,2.4]}});
+
+  // the trace you have already walked — cooled, not erased
+  map.addSource('trace',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'trace-line',type:'line',source:'trace',
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{'line-color':'#255A4B','line-opacity':.32,'line-width':3.4}});
+
+  // reach ring
+  map.addSource('reach',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'reach-fill',type:'fill',source:'reach',
+    paint:{'fill-color':PAL.heatCore,'fill-opacity':.05}});
+  map.addLayer({id:'reach-line',type:'line',source:'reach',
+    paint:{'line-color':PAL.heatEdge,'line-opacity':.3,'line-width':1.2,'line-dasharray':[2,3]}});
+
+  // the heat cloud — same paint as realmap.jsx, but fed a filtered point set
+  map.addSource('heat',{type:'geojson',data:EMPTY});
+  map.addLayer({id:'cand-heat',type:'heatmap',source:'heat',
+    paint:{
+      'heatmap-weight':['*',0.25,['get','w']],
+      'heatmap-intensity':['interpolate',['linear'],['zoom'],13,.8,16,1,19,1.2],
+      'heatmap-radius':['interpolate',['linear'],['zoom'],13,9,16,18,19,34],
+      'heatmap-color':['interpolate',['linear'],['heatmap-density'],
+        0,'rgba(255,106,31,0)', .08,'rgba(255,138,61,0.16)', .22,'rgba(255,138,61,0.5)',
+        .38,PAL.heatMid, .52,PAL.heatInner, .65,PAL.heatCore, 1,PAL.heatCore],
+      'heatmap-opacity':['interpolate',['linear'],['zoom'],13,.82,19,.78]}});
+
+  // invisible hit target so warm streets stay tappable
+  map.addSource('hit',{type:'geojson',data:streetFC});
+  map.addLayer({id:'hit-line',type:'line',source:'hit',
+    layout:{'line-cap':'round'},paint:{'line-color':PAL.heatCore,'line-opacity':0,'line-width':18}});
+  map.on('click','hit-line',e=>openCard(e.features[0].properties.name));
+  map.on('mouseenter','hit-line',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','hit-line',()=>map.getCanvas().style.cursor='');
+
+  // "you are here"
+  const el=document.createElement('div');
+  el.style.cssText='width:18px;height:18px;border-radius:50%;background:'+PAL.accent+
+    ';border:3px solid #fff;box-shadow:0 0 0 6px '+PAL.accent+'33,0 2px 6px rgba(0,0,0,.4)';
+  window.puck=new maplibregl.Marker({element:el}).setLngLat(DATA.walk[0]).addTo(map);
+
+  render();
+});
+
+/* ---------------- geometry helpers ---------------- */
+function circle(center,r,n=54){
+  const pts=[];
+  for(let i=0;i<=n;i++){ const a=i/n*Math.PI*2;
+    pts.push([center[0]+(r*Math.cos(a))/88000, center[1]+(r*Math.sin(a))/111000]); }
+  return {type:'FeatureCollection',features:[{type:'Feature',properties:{},
+    geometry:{type:'Polygon',coordinates:[pts]}}]};
+}
+
+/* ---------------- the whole difference lives here ---------------- */
+function render(){
+  if(!map.getSource('heat')) return;
+  const here = DATA.walk[idx];
+  if(window.puck) puck.setLngLat(here);
+
+  if(mode==='static'){
+    // TODAY: every candidate, at full weight, computed once at search time and
+    // never touched again. Nothing below depends on `here`.
+    map.getSource('heat').setData({type:'FeatureCollection',features:SAMPLES.map(p=>({
+      type:'Feature',properties:{w:1},geometry:{type:'Point',coordinates:[p.lng,p.lat]}}))});
+    map.getSource('trace').setData(EMPTY);
+    map.getSource('reach').setData(EMPTY);
+    map.setPaintProperty('hint-line','line-opacity',0);
+    return;
+  }
+
+  // PROPOSED: the cloud is a function of where you are.
+  const feats=[];
+  SAMPLES.forEach(p=>{
+    const d=metres([p.lng,p.lat],here);
+    if(d<REACH){
+      const w=Math.max(.18,1-d/REACH);                  // warm ahead, feather out
+      feats.push({type:'Feature',properties:{w},geometry:{type:'Point',coordinates:[p.lng,p.lat]}});
+      if(d<TOUCH) visited.add(p.street);
+    } else if(chosen.has(p.street)){
+      feats.push({type:'Feature',properties:{w:.4},    // a street you chose stays warm
+        geometry:{type:'Point',coordinates:[p.lng,p.lat]}});
+    }
+  });
+  map.getSource('heat').setData({type:'FeatureCollection',features:feats});
+  map.getSource('trace').setData({type:'FeatureCollection',features:[{type:'Feature',properties:{},
+    geometry:{type:'LineString',coordinates:DATA.walk.slice(0,idx+1)}}]});
+  const breathe = 1 + .035*Math.sin(Date.now()/900);
+  map.getSource('reach').setData(circle(here,REACH*breathe));
+  map.setPaintProperty('hint-line','line-opacity',.22);
+
+  // counters
+  document.getElementById('cM').textContent=Math.round(walkedM);
+  document.getElementById('cS').textContent=visited.size;
+  document.getElementById('cN').textContent=visited.size;   // all new in a demo session
+
+  checkFork(here);
+}
+
+/* ---------------- forks ---------------- */
+function checkFork(here){
+  if(activeFork) return;
+  for(const j of DATA.junctions){
+    const key=j.a+'|'+j.b;
+    if(forksDone.has(key)) continue;
+    if(metres([j.lng,j.lat],here)<FORK){
+      activeFork=j; forksDone.add(key); pause();
+      const A=STREET_BY_NAME[j.a], B=STREET_BY_NAME[j.b];
+      document.getElementById('fkA').textContent=j.a;
+      document.getElementById('fkB').textContent=j.b;
+      document.getElementById('fpA').textContent=phrase(A);
+      document.getElementById('fpB').textContent=phrase(B);
+      document.getElementById('fork').classList.add('on');
+      return;
+    }
+  }
+}
+function phrase(s){
+  const t=(s&&s.descEn)||'';
+  const cut=t.split(/,| where | lined /)[0];
+  return (cut.length>52?cut.slice(0,52)+'…':cut).replace(/^An? /,'');
+}
+function chooseFork(i){
+  if(!activeFork) return;
+  chosen.add(i===0?activeFork.a:activeFork.b);
+  dismissFork();
+}
+function dismissFork(){
+  document.getElementById('fork').classList.remove('on');
+  activeFork=null; render(); play();
+}
+
+/* ---------------- street card ---------------- */
+function openCard(name){
+  const s=STREET_BY_NAME[name]; if(!s) return;
+  document.getElementById('scName').textContent=s.name;
+  document.getElementById('scDesc').textContent=s.descEn||s.desc||'';
+  document.getElementById('scard').classList.add('on');
+}
+function hideCard(){ document.getElementById('scard').classList.remove('on'); }
+
+/* ---------------- transport ---------------- */
+function play(){
+  if(playing||idx>=DATA.walk.length-1) return;
+  playing=true; setPlayLabel();
+  timer=setInterval(()=>{
+    if(idx>=DATA.walk.length-1){ pause(); return; }
+    walkedM+=metres(DATA.walk[idx],DATA.walk[idx+1]);
+    idx++;
+    document.getElementById('scrub').value=Math.round(idx/(DATA.walk.length-1)*100);
+    render();
+    if(mode==='live') map.easeTo({center:DATA.walk[idx],duration:STEP_MS,essential:true});
+  },STEP_MS);
+}
+function pause(){ playing=false; clearInterval(timer); setPlayLabel(); }
+function togglePlay(){ playing?pause():play(); }
+function setPlayLabel(){
+  const t=playing?'❚❚ Pause':'▶ Walk';
+  document.getElementById('playBtn').textContent=t;
+  document.getElementById('playBtn2').textContent=t;
+}
+function scrubTo(v){
+  pause();
+  const target=Math.round(v/100*(DATA.walk.length-1));
+  walkedM=0; for(let i=0;i<target;i++) walkedM+=metres(DATA.walk[i],DATA.walk[i+1]);
+  idx=target; render(); map.easeTo({center:DATA.walk[idx],duration:200});
+}
+function resetWalk(){
+  pause(); idx=0; walkedM=0; visited=new Set(); chosen=new Set(); forksDone=new Set(); activeFork=null;
+  document.getElementById('scrub').value=0;
+  document.getElementById('fork').classList.remove('on');
+  closeSheet(); hideCard(); render();
+  map.easeTo({center:DATA.walk[0],zoom:15.9,duration:400});
+}
+
+/* ---------------- mode ---------------- */
+function setMode(m){
+  mode=m;
+  document.getElementById('mStatic').classList.toggle('on',m==='static');
+  document.getElementById('mLive').classList.toggle('on',m==='live');
+  document.getElementById('badgeTxt').textContent = m==='static'?'STATIC · TODAY':'RESPONSIVE';
+  document.getElementById('badgeDot').style.background = m==='static'?'#B9C6C2':PAL.heatMid;
+  const live = m==='live';
+  document.getElementById('counters').style.opacity = live?1:0;
+  document.getElementById('endBtn').style.display = live?'':'none';
+  if(!live){ document.getElementById('fork').classList.remove('on'); activeFork=null; }
+  render();
+}
+
+/* ---------------- closure ---------------- */
+function endWander(){
+  pause();
+  const mins=Math.max(1,Math.round(walkedM/70));   // ~4.2 km/h
+  document.getElementById('sM').textContent=Math.round(walkedM);
+  document.getElementById('sT').textContent=mins;
+  document.getElementById('sN').textContent=visited.size;
+  const ul=document.getElementById('slist'); ul.innerHTML='';
+  [...visited].forEach(n=>{
+    const s=STREET_BY_NAME[n]; if(!s) return;
+    const li=document.createElement('li');
+    li.innerHTML='<b>'+s.name+'</b><span class="new">NEW</span><p>'+clip(s.descEn||'',140)+'</p>';
+    ul.appendChild(li);
+  });
+  if(!visited.size) ul.innerHTML='<li><p>Walk a little first — press ▶ and let the cloud reveal a few streets.</p></li>';
+  document.getElementById('sheet').classList.add('on');
+}
+function clip(t,n){ if(t.length<=n) return t;
+  const c=t.slice(0,n); return c.slice(0,c.lastIndexOf(' '))+'…'; }
+function closeSheet(){ document.getElementById('sheet').classList.remove('on'); }
+
+function showToast(html){
+  const t=document.getElementById('toast');
+  t.innerHTML=html; t.classList.add('on');
+  clearTimeout(window._tt); window._tt=setTimeout(()=>t.classList.remove('on'),4200);
+}
+
+// keep the ring breathing even while paused
+setInterval(()=>{ if(mode==='live'&&!playing&&map.getSource('reach')) {
+  map.getSource('reach').setData(circle(DATA.walk[idx],REACH*(1+.035*Math.sin(Date.now()/900)))); } },90);
+
+setMode('static');
+</script>
+</body>
+</html>

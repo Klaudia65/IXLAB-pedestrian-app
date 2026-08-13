@@ -15,23 +15,30 @@ function outingFor(friendCount) {
   return friendCount === 0 ? 'solo' : friendCount === 1 ? 'couple' : 'friends';
 }
 
-// Fallback preference chips, used only if the swipe hasn't produced a profile yet.
-const PROFILE_PREFS = [
-  { key: 'raw', label: 'raw' },
-  { key: 'historic', label: 'historic' },
-  { key: 'local', label: 'local' },
-  { key: 'quiet', label: 'quiet' },
-];
-
-// Chips the swipe detected for this walker (written by commitSwipeProfile as
-// profile.chips: ordered [{ key: axisKey, label, value }]). Null if not swiped yet.
-function readSwipeChips() {
-  try {
-    const v = localStorage.getItem('seoulwalk.profile.chips');
-    const a = v != null ? JSON.parse(v) : null;
-    return Array.isArray(a) && a.length ? a.map(c => ({ key: c.key, label: c.label })) : null;
-  } catch (e) { return null; }
+// The declarable preference list: ONE entry per axis, keyed by axis, labelled by the
+// pole this walker leans toward (from the onboarding, then any slider tuning). Keyed
+// by axis on purpose — the old fallback list was keyed by pole label, so its toggles
+// matched nothing downstream and turning a preference off changed nothing at all.
+// Axes the onboarding never resolved still appear, so a level can be declared for
+// them too. Strongest lean first, so what the walker actually cares about reads
+// first. Uses the RAW vector: an axis set to "doesn't matter" must still show its
+// label so it can be brought back.
+function readProfileAxes() {
+  const raw = (window.readTasteVectorRaw && window.readTasteVectorRaw()) || {};
+  return (window.SWIPE_AXES || []).map(([key, neg, pos]) => {
+    const v = raw[key];
+    const lean = (v == null || isNaN(v)) ? 0 : v;
+    const label = Math.abs(lean) >= 0.15 ? (lean > 0 ? pos : neg) : (pos || neg);
+    return { key, label: label || key, lean };
+  }).filter(a => a.label).sort((a, b) => Math.abs(b.lean) - Math.abs(a.lean));
 }
+
+// What each declared level means to the walker, in their words rather than the
+// mechanism's.
+const LEVEL_COPY = {
+  pref: { name: 'counts',         hint: 'tap to stop counting it' },
+  off:  { name: "doesn't count",  hint: 'tap to count it again — you never block the group on it' },
+};
 
 // Up to two uppercase initials from a friend's display name, for their avatar disc.
 function friendInitials(name) {
@@ -56,17 +63,19 @@ function ProfileBackdrop({ accent }) {
   );
 }
 
-// ---- one preference chip (toggle) ----
-function PrefChip({ label, on, accent, onClick }) {
+// ---- one preference chip (counts / doesn't count) ----
+// The two states differ by fill AND by border style, not by colour alone, so a
+// dropped preference still reads as dropped in greyscale.
+function PrefChip({ label, level, accent, onClick }) {
   const t = React.useContext(ThemeCtx);
+  const style = level === 'off'
+    ? { border: '1.5px dashed var(--line-strong)', background: 'transparent', color: 'var(--ink-faint)' }
+    : { border: `1.5px solid ${accent}`, background: `color-mix(in srgb, ${accent} 14%, transparent)`, color: accent };
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} title={LEVEL_COPY[level].name + ' — ' + LEVEL_COPY[level].hint}
       style={{ padding: '9px 15px', cursor: 'pointer', borderRadius: t.radiusPill,
         fontFamily: t.fontMono, fontSize: 11.5, letterSpacing: '0.16em', textTransform: 'uppercase', fontWeight: 700,
-        border: on ? `1.5px solid ${accent}` : '1.5px solid var(--line)',
-        background: on ? 'color-mix(in srgb, ' + accent + ' 14%, transparent)' : 'var(--card)',
-        color: on ? accent : 'var(--ink-faint)',
-        transition: 'all .2s ease' }}>{label}</button>
+        transition: 'all .2s ease', ...style }}>{label}</button>
   );
 }
 
@@ -204,10 +213,12 @@ function ProfileScreen({ go }) {
   const avatarText = (account.name || 'You').toUpperCase();
   const avatarFont = avatarText.length <= 4 ? 26 : avatarText.length <= 7 ? 20 : 15;
 
-  // Prefs come from the swipe when available (else the fallback set). A chip is ON
-  // unless the user explicitly toggled it off, so newly detected chips show ON.
-  const detectedPrefs = React.useMemo(() => readSwipeChips() || PROFILE_PREFS, []);
-  const [prefs, setPrefs] = usePersist('profile.prefs', {});
+  // Preferences: one entry per axis with the level the walker declared for it. The
+  // levels are NOT React-local state — they're persisted where the sliders screen and
+  // the group negotiation read them (theme.jsx readAxisLevels / setAxisLevel), so this
+  // screen holds a mirror it refreshes after each tap.
+  const detectedPrefs = React.useMemo(() => readProfileAxes(), []);
+  const [levels, setLevels] = React.useState(() => window.readAxisLevels());
   const favorites = useFavorites();               // saved streets from the detailed map
   const friendFavs = useFriendFavorites();        // streets my friends have shared with me
   const pathsScroll = useDragScroll();
@@ -265,25 +276,34 @@ function ProfileScreen({ go }) {
     return Array.from(by.values()).sort((a, b) => (a.ts < b.ts ? 1 : -1));
   }, [friendFavs]);
 
-  // Group taste for explainability: blend my vector with the joining friends'
-  // (missing axes skipped, never a reject) and surface the strongest shared leans
-  // — "what you all like". Empty when walking solo.
+  // Group taste for explainability: the strongest leans of the SAME negotiated target
+  // the map ranks on ("what you all like"), so the promise here matches what arrives.
+  // Empty when walking solo. Depends on `levels` too: dropping a preference changes
+  // what the group leans toward.
   const groupChips = React.useMemo(() => {
-    const active = friendList.filter(f => joining[f.participant_id] && f.profile);
-    if (!active.length || !window.mergeTasteVectors) return [];
-    const merged = window.mergeTasteVectors([window.readUserTasteVector(), ...active.map(f => f.profile)]);
-    return window.groupTasteChips(merged, 3);
-  }, [friendList, joining]);
+    const active = friendList.filter(f => joining[f.participant_id]);
+    if (!active.length || !window.groupTarget) return [];
+    return window.groupTasteChips(window.groupTarget().target, 3);
+  }, [friendList, joining, levels]);
 
-  const isPrefOn = k => prefs[k] !== false;
-  const prefCount = detectedPrefs.filter(p => isPrefOn(p.key)).length;
+  const levelOf = k => levels[k] || 'pref';
+  const keptCount = detectedPrefs.filter(p => levelOf(p.key) !== 'off').length;
+  const droppedCount = detectedPrefs.length - keptCount;
   const friendCount = friendList.filter(f => joining[f.participant_id]).length;
   const accent = OUTING_ACCENT[outingFor(friendCount)];
   const ctaMeta = friendCount === 0
-    ? `Solo wander · ${prefCount} preferences`
-    : `${friendCount} friend${friendCount > 1 ? 's' : ''} · ${prefCount} preferences`;
+    ? `Solo wander · ${keptCount} preferences`
+    : `${friendCount} friend${friendCount > 1 ? 's' : ''} · ${keptCount} preferences`;
 
-  const togglePref = k => setPrefs({ ...prefs, [k]: !isPrefOn(k) });
+  // One tap walks down PREF_LEVELS and wraps. Writing goes through setAxisLevel so
+  // the sliders screen and the group negotiation see it immediately.
+  function cyclePref(k) {
+    const order = window.PREF_LEVELS;
+    const next = order[(order.indexOf(levelOf(k)) + 1) % order.length];
+    window.setAxisLevel(k, next);
+    setLevels(window.readAxisLevels());
+    if (window.StudyAPI) window.StudyAPI.logEvent('pref_level', { axis: k, level: next });
+  }
   const toggleFriend = pid => setJoining({ ...joining, [pid]: !joining[pid] });
 
   const iconBtn = {
@@ -392,11 +412,17 @@ function ProfileScreen({ go }) {
         <section style={{ padding: '22px 20px 0' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <h2 style={{ margin: 0, fontFamily: t.fontHead, fontSize: 20, fontWeight: 500, color: 'var(--ink)' }}>Preferences</h2>
-            <Label style={{ color: 'var(--ink-faint)' }}>{detectedPrefs.length} detected · {prefCount} on</Label>
+            <Label style={{ color: 'var(--ink-faint)' }}>
+              {keptCount} count{droppedCount ? ` · ${droppedCount} dropped` : ''}
+            </Label>
           </div>
+          <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
+            From your onboarding. Tap one to drop it — a dropped preference stops shaping your walk.
+            {friendCount > 0 && ' Walking together, only the ones that count get negotiated; on the others you never block the group.'}
+          </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {detectedPrefs.map(p => (
-              <PrefChip key={p.key} label={p.label} on={isPrefOn(p.key)} accent={accent} onClick={() => togglePref(p.key)} />
+              <PrefChip key={p.key} label={p.label} level={levelOf(p.key)} accent={accent} onClick={() => cyclePref(p.key)} />
             ))}
           </div>
         </section>

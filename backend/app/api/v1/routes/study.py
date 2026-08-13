@@ -41,6 +41,12 @@ from app.models.schemas.study import (
     SessionCreate,
     SessionCreated,
     SliderChangeIn,
+    WalkAnswerIn,
+    WalkCreate,
+    WalkMemberOut,
+    WalkOut,
+    WalkStateIn,
+    WalkStatusIn,
 )
 
 
@@ -488,6 +494,224 @@ async def friends_favorites(session_id: int, db: AsyncSession = Depends(get_db))
         ORDER BY sf.ts DESC
     """), {"pid": pid})).mappings().all()
     return FriendFavoritesOut(favorites=[FriendFavoriteOut(**row) for row in rows])
+
+
+# --- shared walk (friends mode) ---------------------------------------------
+#
+# Everything about a walk is read through GET /walks/current, which the client polls.
+# All routes sit under /sessions/{id}/... like the rest of this file, so the shared
+# study key plus the session's own participant id are the only auth story -- and every
+# route below re-checks that the asking participant is actually a MEMBER of the walk,
+# otherwise anyone holding the key could read or rewrite a stranger's negotiation.
+
+
+async def _walk_out(db: AsyncSession, walk_id: int, me: int) -> WalkOut:
+    """Assemble the whole walk as the client consumes it: the negotiation document,
+    its version, and every member with the taste they froze when they accepted."""
+    w = (await db.execute(text("""
+        SELECT id, host_id, status, state, version FROM walk WHERE id = :wid
+    """), {"wid": walk_id})).mappings().one_or_none()
+    if w is None:
+        raise HTTPException(status_code=404, detail="unknown walk")
+    rows = (await db.execute(text("""
+        SELECT wm.participant_id, p.display_name, wm.role, wm.status, wm.vector, wm.levels
+        FROM walk_member wm
+        JOIN participant p ON p.id = wm.participant_id
+        WHERE wm.walk_id = :wid
+        ORDER BY (wm.role = 'host') DESC, wm.invited_at
+    """), {"wid": walk_id})).mappings().all()
+    return WalkOut(
+        walk_id=w["id"], host_id=w["host_id"], me=me, status=w["status"],
+        state=w["state"] or {}, version=w["version"],
+        members=[WalkMemberOut(**r) for r in rows],
+    )
+
+
+async def _require_member(db: AsyncSession, walk_id: int, pid: int) -> None:
+    ok = (await db.execute(text("""
+        SELECT 1 FROM walk_member WHERE walk_id = :wid AND participant_id = :pid
+    """), {"wid": walk_id, "pid": pid})).scalar_one_or_none()
+    if not ok:
+        raise HTTPException(status_code=403, detail="not a member of this walk")
+
+
+async def _log_walk_event(
+    db: AsyncSession, walk_id: int, pid: int | None, action: str,
+    axis: str | None = None, payload: dict | None = None,
+) -> None:
+    await db.execute(text("""
+        INSERT INTO walk_event (walk_id, participant_id, axis, action, payload)
+        VALUES (:wid, :pid, :axis, :action, CAST(:payload AS jsonb))
+    """), {
+        "wid": walk_id, "pid": pid, "axis": axis, "action": action,
+        "payload": json.dumps(payload) if payload is not None else None,
+    })
+
+
+@router.post("/{session_id}/walks", response_model=WalkOut)
+async def create_walk(
+    session_id: int, body: WalkCreate, db: AsyncSession = Depends(get_db)
+):
+    """Open a walk and invite friends to it. The host is accepted immediately (they
+    just asked for it) with their taste frozen; everyone invited starts 'invited' and
+    contributes nothing until they answer.
+
+    Invitees must already be friends -- the friendship edge is the only way to reach
+    someone, so a walk can't be used to pull a stranger's taste vector out of the DB.
+    Any existing un-ended walk this participant hosts is closed first, so "start a
+    walk" can't quietly leave several live negotiations behind."""
+    pid = await _participant_of_session(db, session_id)
+    friends = {f.participant_id for f in await _fetch_friends(db, pid)}
+    invitees = [i for i in dict.fromkeys(body.invite) if i != pid]
+    strangers = [i for i in invitees if i not in friends]
+    if strangers:
+        raise HTTPException(status_code=403, detail=f"not your friends: {strangers}")
+
+    await db.execute(text("""
+        UPDATE walk SET status = 'ended', ended_at = NOW()
+        WHERE host_id = :pid AND status <> 'ended'
+    """), {"pid": pid})
+
+    walk_id = (await db.execute(text("""
+        INSERT INTO walk (host_id, status) VALUES (:pid, 'lobby') RETURNING id
+    """), {"pid": pid})).scalar_one()
+    await db.execute(text("""
+        INSERT INTO walk_member (walk_id, participant_id, role, status, vector, levels, answered_at)
+        VALUES (:wid, :pid, 'host', 'accepted', CAST(:vec AS jsonb), CAST(:lv AS jsonb), NOW())
+    """), {
+        "wid": walk_id, "pid": pid,
+        "vec": json.dumps(body.vector) if body.vector is not None else None,
+        "lv": json.dumps(body.levels) if body.levels is not None else None,
+    })
+    if invitees:
+        await db.execute(text("""
+            INSERT INTO walk_member (walk_id, participant_id, role, status)
+            VALUES (:wid, :pid, 'guest', 'invited') ON CONFLICT DO NOTHING
+        """), [{"wid": walk_id, "pid": i} for i in invitees])
+    await _log_walk_event(db, walk_id, pid, "invite", None, {"invited": invitees})
+    return await _walk_out(db, walk_id, pid)
+
+
+@router.get("/{session_id}/walks/current")
+async def current_walk(session_id: int, db: AsyncSession = Depends(get_db)):
+    """The walk this participant is on or has been invited to, newest first, or
+    {"walk": null} when there is none. This is the one route the client polls, so it
+    answers every question a phone has: am I invited, who accepted, what has been
+    proposed, and at which version."""
+    pid = await _participant_of_session(db, session_id)
+    walk_id = (await db.execute(text("""
+        SELECT w.id FROM walk w
+        JOIN walk_member wm ON wm.walk_id = w.id AND wm.participant_id = :pid
+        WHERE w.status <> 'ended' AND wm.status <> 'declined'
+        ORDER BY w.created_at DESC LIMIT 1
+    """), {"pid": pid})).scalar_one_or_none()
+    if walk_id is None:
+        return {"walk": None}
+    return {"walk": await _walk_out(db, walk_id, pid)}
+
+
+@router.post("/{session_id}/walks/{walk_id}/answer", response_model=WalkOut)
+async def answer_walk(
+    session_id: int, walk_id: int, body: WalkAnswerIn, db: AsyncSession = Depends(get_db)
+):
+    """Accept or decline an invitation. Accepting is the moment the taste is frozen:
+    from here the negotiation is over THIS vector, not whatever the profile becomes
+    later. Declining leaves the row for the record but drops the person from the walk."""
+    pid = await _participant_of_session(db, session_id)
+    await _require_member(db, walk_id, pid)
+    updated = (await db.execute(text("""
+        UPDATE walk_member
+           SET status = :st, answered_at = NOW(),
+               vector = COALESCE(CAST(:vec AS jsonb), vector),
+               levels = COALESCE(CAST(:lv AS jsonb), levels)
+         WHERE walk_id = :wid AND participant_id = :pid
+        RETURNING status
+    """), {
+        "wid": walk_id, "pid": pid,
+        "st": "accepted" if body.accept else "declined",
+        "vec": json.dumps(body.vector) if body.vector is not None else None,
+        "lv": json.dumps(body.levels) if body.levels is not None else None,
+    })).scalar_one_or_none()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="not invited to this walk")
+    await _log_walk_event(db, walk_id, pid, "answer", None, {"accept": body.accept})
+    return await _walk_out(db, walk_id, pid)
+
+
+@router.post("/{session_id}/walks/{walk_id}/state")
+async def patch_walk_state(
+    session_id: int, walk_id: int, body: WalkStateIn, db: AsyncSession = Depends(get_db)
+):
+    """Apply a patch to the negotiation and bump the version.
+
+    A null value for an axis REMOVES it (an undo), which a plain jsonb `||` merge
+    can't express -- it would store a JSON null and leave the axis looking settled --
+    so the document is merged here and written back whole, guarded by the version the
+    client last saw. A stale version returns 409 with the current walk attached, so the
+    client can re-render from the truth instead of retrying blind."""
+    pid = await _participant_of_session(db, session_id)
+    await _require_member(db, walk_id, pid)
+    row = (await db.execute(text("""
+        SELECT state, version, status FROM walk WHERE id = :wid FOR UPDATE
+    """), {"wid": walk_id})).mappings().one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown walk")
+    if row["status"] == "ended":
+        raise HTTPException(status_code=409, detail="this walk has ended")
+    if body.base_version is not None and body.base_version != row["version"]:
+        return {
+            "ok": False, "conflict": True,
+            "walk": await _walk_out(db, walk_id, pid),
+        }
+
+    state = dict(row["state"] or {})
+    for axis, settlement in body.patch.items():
+        if settlement is None:
+            state.pop(axis, None)
+        else:
+            state[axis] = settlement
+    version = (await db.execute(text("""
+        UPDATE walk SET state = CAST(:state AS jsonb), version = version + 1
+        WHERE id = :wid RETURNING version
+    """), {"wid": walk_id, "state": json.dumps(state)})).scalar_one()
+    if body.action:
+        await _log_walk_event(db, walk_id, pid, body.action, body.axis, {"patch": body.patch})
+    return {"ok": True, "conflict": False, "version": version, "state": state}
+
+
+@router.post("/{session_id}/walks/{walk_id}/status", response_model=WalkOut)
+async def set_walk_status(
+    session_id: int, walk_id: int, body: WalkStatusIn, db: AsyncSession = Depends(get_db)
+):
+    """Move the walk out of the lobby, or end it. Only the host can: starting is the
+    moment the group commits to who is in, and letting any phone do that would make
+    "everyone accepted before we started" unenforceable."""
+    pid = await _participant_of_session(db, session_id)
+    if body.status not in ("lobby", "active", "ended"):
+        raise HTTPException(status_code=422, detail="status must be lobby, active or ended")
+    host = (await db.execute(
+        text("SELECT host_id FROM walk WHERE id = :wid"), {"wid": walk_id}
+    )).scalar_one_or_none()
+    if host is None:
+        raise HTTPException(status_code=404, detail="unknown walk")
+    if host != pid:
+        raise HTTPException(status_code=403, detail="only the host can change the walk status")
+    # The two timestamp decisions are passed as booleans rather than by comparing :st
+    # again inside the CASEs: reusing one bind as both a VARCHAR value and a comparison
+    # operand leaves asyncpg unable to deduce a single type for it, and the statement
+    # fails with AmbiguousParameterError (same trap as the :code bind in create_session).
+    await db.execute(text("""
+        UPDATE walk
+           SET status = :st,
+               started_at = CASE WHEN :go_active THEN COALESCE(started_at, NOW()) ELSE started_at END,
+               ended_at   = CASE WHEN :go_ended  THEN NOW() ELSE NULL END
+         WHERE id = :wid
+    """), {
+        "wid": walk_id, "st": body.status,
+        "go_active": body.status == "active", "go_ended": body.status == "ended",
+    })
+    await _log_walk_event(db, walk_id, pid, "status", None, {"status": body.status})
+    return await _walk_out(db, walk_id, pid)
 
 
 # --- generic events ---------------------------------------------------------
