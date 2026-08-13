@@ -179,6 +179,16 @@ class WalkStatusIn(BaseModel):
     status: str                                       # 'active' | 'ended'
 
 
+class WalkRouteIn(BaseModel):
+    """The route the leader picked for the whole group. `route` is the map's own option
+    document (geometry + ordered legs) stored verbatim — the server never interprets it,
+    it only relays it — and `summary` is the small part a banner shows without fetching
+    the geometry. Both null clears the pick and sends everyone back to the options."""
+
+    route: dict | None = None
+    summary: dict | None = None
+
+
 class WalkMemberOut(BaseModel):
     participant_id: int
     display_name: str | None = None
@@ -196,6 +206,13 @@ class WalkOut(BaseModel):
     state: dict = {}
     version: int
     members: list[WalkMemberOut] = []
+    # The leader's picked route travels as a POINTER, not as geometry: `route_at` is the
+    # change token a follower compares, and the document itself is fetched once from
+    # GET /walks/{id}/route. Putting a few dozen KB of coordinates in a payload polled
+    # every 2.5 seconds by every phone would be paid for over and over for nothing.
+    route_at: datetime | None = None
+    route_by: int | None = None
+    route_summary: dict | None = None
 
 
 class WalkInvitationOut(BaseModel):

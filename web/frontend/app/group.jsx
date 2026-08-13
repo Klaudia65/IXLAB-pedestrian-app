@@ -205,7 +205,7 @@ function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onMove, 
             color: settled ? 'var(--good)' : pending ? 'var(--ink)' : 'var(--ink-soft)' }}>
             {settled ? settledLine()
               : pending ? pendingLine()
-                : <React.Fragment>No common ground — <b style={{ color: 'var(--ink)' }}>{nameOf(axis.outlier)}</b> leans {String(leanWord).toLowerCase()}. Drag the ◆ to pick a spot.</React.Fragment>}
+                : <React.Fragment>No common ground — <b style={{ color: 'var(--ink)' }}>{nameOf(axis.outlier)}</b> leans {String(leanWord).toLowerCase()}, so this one is <b style={{ color: 'var(--ink)' }}>left out</b> of the walk. Drag the ◆ to put it back in.</React.Fragment>}
           </span>
           <span style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
             {settled && <AxisBtn onClick={() => onClear(axis.id)}>✓ undo</AxisBtn>}
@@ -222,19 +222,101 @@ function AxisRow({ axis, me, memberIds, memberMap, pairMode, onPropose, onMove, 
               </React.Fragment>
             )}
             {!settled && !pending && (
-              /* The one-tap option, next to dragging the cursor yourself. A PAIR has no
-                 majority to lean toward, and a midpoint between two opposite tastes is a
-                 place neither of them asked for — so their offer is to leave the axis
-                 out. With three or more, the zone the others already share IS the
+              /* Two ways out, because an unsettled axis is ALREADY out of the walk (see
+                 groupTarget): the app never invents a midpoint nobody chose. So the offers
+                 are to put it back in somewhere, or to make the drop a real decision.
+                 Which one is offered first depends on the group: a PAIR has no majority to
+                 lean toward, and a midpoint between two opposite tastes is a place neither
+                 asked for; with three or more the zone the others already share IS the
                  majority's, so meeting in it leans toward where most of them are. */
-              <AxisBtn kind="primary" onClick={() => onPropose(axis.id, { how: pairMode ? 'drop' : 'middle', by: me })}>
-                {pairMode ? 'Leave it out' : 'Meet in the middle'}
-              </AxisBtn>
+              <React.Fragment>
+                <AxisBtn kind={pairMode ? 'primary' : undefined}
+                  onClick={() => onPropose(axis.id, { how: 'drop', by: me })}
+                  title="Agree to leave this dimension out of the walk">Leave it out</AxisBtn>
+                <AxisBtn kind={pairMode ? undefined : 'primary'}
+                  onClick={() => onPropose(axis.id, { how: 'middle', by: me })}>Meet in the middle</AxisBtn>
+              </React.Fragment>
             )}
           </span>
         </div>
       )}
     </div>);
+}
+
+/* GREENERY — the dimension the bipolar rows above cannot hold.
+   "Leafy street" and "Park" are two doses of the same wish, not two opposite poles, so
+   there is no position to disagree FROM: nobody in the group can be recorded as wanting
+   less green than someone else. That is why it has its own row and its own rule (see
+   reconcileGreenery in theme.jsx): with nothing settled the strongest wish stands, and the
+   buttons let the group turn that default into a real decision — including deciding to
+   skip the green detour, which is the one thing the taste data alone can never say. */
+function GreeneryRow({ green, me, members, memberMap, onPropose, onAccept, onClear }) {
+  const t = React.useContext(ThemeCtx);
+  const LABEL = { off: 'No green detour', leafy: 'Leafy street', park: 'Park' };
+  const SUB = { off: 'skip it', leafy: 'a little green', park: 'a green walk' };
+  const settled = !!green.applied, pending = !!green.pending;
+  const iAmAsked = (green.asks || []).indexOf(me) >= 0;
+  const nameOf = id => (memberMap[id] ? memberMap[id].name : 'someone');
+  const namesWishing = mode => members.filter(m => green.wishes[m.id] === mode).map(m => m.name);
+  const offered = pending ? green.pending.mode : null;
+  const waiting = (green.asks || []).filter(id => (green.accepts || []).indexOf(id) < 0);
+  return (
+    <div style={{ padding: '12px 13px', borderRadius: 16, border: '1px solid var(--line)', background: 'var(--card)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--ink)' }}>Greenery</span>
+        <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '3px 8px',
+          color: settled ? '#fff' : 'var(--ink-soft)', background: settled ? DS.safe : 'var(--card-2)' }}>
+          {settled ? '✓ agreed' : pending ? 'offer waiting' : green.idle ? 'not on the walk' : 'strongest wish'}
+        </span>
+      </div>
+      {/* the two doses + the explicit skip. Tapping is an OFFER, like every other row. */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        {['leafy', 'park', 'off'].map(mode => {
+          const on = (offered || green.mode) === mode;
+          return (
+            <button key={mode} onClick={() => onPropose(mode)}
+              style={{ flex: 1, padding: '7px 6px', borderRadius: t.radiusSm, cursor: 'pointer', fontFamily: t.fontUI,
+                border: '1px solid ' + (on ? 'var(--ink)' : 'var(--line)'), background: on ? 'var(--ink)' : 'var(--card)',
+                color: on ? '#fff' : 'var(--ink-soft)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+              <span style={{ fontWeight: 700, fontSize: 11.5 }}>{LABEL[mode]}</span>
+              <span style={{ fontSize: 9, opacity: 0.7 }}>{SUB[mode]}</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* who wished for what — the row must not read as a group decision when it is only
+          the loudest wish standing in for one. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 7 }}>
+        {['park', 'leafy', 'off'].map(mode => {
+          const who = namesWishing(mode);
+          if (!who.length) return null;
+          return (
+            <span key={mode} style={{ fontSize: 10.5, color: 'var(--ink-soft)' }}>
+              <b style={{ color: 'var(--ink)' }}>{LABEL[mode]}</b>: {who.join(', ')}
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ flex: '1 1 130px', fontSize: 11.5, lineHeight: 1.35,
+          color: settled ? 'var(--good)' : pending ? 'var(--ink)' : 'var(--ink-soft)' }}>
+          {settled
+            ? <React.Fragment>✓ Agreed: <b>{LABEL[green.mode]}</b>.</React.Fragment>
+            : pending
+              ? <React.Fragment><b style={{ color: 'var(--ink)' }}>{nameOf(green.turn)}</b> offers <b style={{ color: 'var(--ink)' }}>{LABEL[offered]}</b>
+                  {waiting.length ? <React.Fragment> — waiting on {waiting.map(nameOf).join(', ')}.</React.Fragment> : '.'}</React.Fragment>
+              : green.idle
+                ? 'None of you asked for green, so the walk ignores it.'
+                : <React.Fragment>Nobody here is against green, so the strongest wish stands: <b style={{ color: 'var(--ink)' }}>{LABEL[green.mode]}</b>. Tap to decide it together.</React.Fragment>}
+        </span>
+        <span style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
+          {settled && <AxisBtn onClick={onClear}>✓ undo</AxisBtn>}
+          {pending && iAmAsked && <AxisBtn kind="accept" onClick={onAccept}>You accept</AxisBtn>}
+          {pending && !iAmAsked && <AxisBtn onClick={onClear}>withdraw</AxisBtn>}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function GroupScreen({ go }) {
@@ -345,7 +427,11 @@ function GroupScreen({ go }) {
   const idleAxes = allAxes.filter(a => a.idle && !a.applied);
   const openAxes = liveAxes.filter(a => a.conflict && !a.applied && !a.pending);
   const waitingAxes = liveAxes.filter(a => a.pending);
-  const unresolved = openAxes.length + waitingAxes.length;
+  // Greenery can't be a disagreement (nobody can be against it), so an unsettled one is
+  // never counted as one — but an OFFER on it is waiting on somebody, like any other.
+  const green = gt.green || null;
+  const greenWaiting = green && green.pending ? 1 : 0;
+  const unresolved = openAxes.length + waitingAxes.length + greenWaiting;
 
   // No street list here on purpose. This screen is the negotiation; ranking streets
   // while the group is still bargaining answers a question nobody has asked yet, and it
@@ -387,6 +473,23 @@ function GroupScreen({ go }) {
     window.clearSettlement(axisId);
     bump(x => x + 1);
     if (window.StudyAPI) window.StudyAPI.logEvent('group_unsettle', { axis: axisId });
+  }
+  // Greenery rides the SAME settlement document as the axes ('green' key, mode instead of
+  // a position), so it reaches the other phones through the walk with no extra plumbing.
+  function proposeGreen(mode) {
+    window.setSettlement('green', { how: 'green', mode: mode, by: me });
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_propose', { axis: 'green', how: 'green', mode: mode, by: me });
+  }
+  function acceptGreen() {
+    window.acceptSettlement('green', me);
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_accept', { axis: 'green', how: 'green' });
+  }
+  function clearGreen() {
+    window.clearSettlement('green');
+    bump(x => x + 1);
+    if (window.StudyAPI) window.StudyAPI.logEvent('group_unsettle', { axis: 'green' });
   }
   // 'Find our spot' — the one moment anything is computed from the negotiation. It hands
   // the map an INTENT rather than a result: the map owns the street scores, the walk
@@ -551,8 +654,8 @@ function GroupScreen({ go }) {
               ? 'Every dimension has a zone you all hold. The walk is built from those zones.'
               : <React.Fragment>
                   {waitingAxes.length > 0 && <React.Fragment><b style={{ color: 'var(--ink)' }}>{waitingAxes.length} offer{waitingAxes.length > 1 ? 's' : ''} waiting to be accepted</b> — an offer changes nothing until it is. </React.Fragment>}
-                  Go anyway and the {unresolved === 1 ? 'unsettled one falls' : `${unresolved} unsettled ones fall`} back to
-                  {pairMode ? ' where you two overlap least badly' : ' where most of you already agree'} — nobody has agreed to that.
+                  Go anyway and the {unresolved === 1 ? 'unsettled one is' : `${unresolved} unsettled ones are`} <b style={{ color: 'var(--ink)' }}>left out</b> of the walk:
+                  the streets are ranked on what you agreed, not on a middle nobody chose.
                 </React.Fragment>}
           </p>
 
@@ -560,6 +663,10 @@ function GroupScreen({ go }) {
             {liveAxes.map((a) => <AxisRow key={a.id} axis={a} me={me} memberIds={memberIds} memberMap={memberMap}
               pairMode={pairMode} onPropose={propose} onMove={moveCursor}
               onAccept={accept} onCounter={counter} onClear={clear} />)}
+
+            {/* the single-pole dimension, with the two doses the map offers */}
+            {green && <GreeneryRow green={green} me={me} members={members} memberMap={memberMap}
+              onPropose={proposeGreen} onAccept={acceptGreen} onClear={clearGreen} />}
 
             {liveAxes.length === 0 && (
               <div style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>

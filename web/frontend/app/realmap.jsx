@@ -305,11 +305,22 @@ function readVibeTarget() {
 // Now the map ranks on exactly what the group negotiated, nudges included.
 // `userTarget` is passed through as the walker's own side of the blend so the live
 // in-map sliders still re-rank instantly (no localStorage round-trip).
-// Returns { target, group } where group is null when walking solo (target unchanged).
+// Returns { target, group, greenMode }: group is null when walking solo (target
+// unchanged), and greenMode is the group's greenery decision — 'off' | 'leafy' | 'park' —
+// or null when there is nobody to decide it with. Greenery is not an axis on the map
+// (see targetFromSliders): 'leafy' ranks streets by canopy, 'park' surfaces the park walks
+// and feeds park edges to the router. So the group's choice has to be handed back
+// separately, or the walk would follow whichever buttons THIS phone happens to have set.
 function mergeTargetWithGroup(userTarget) {
-  if (!window.groupTarget) return { target: userTarget, group: null };
+  if (!window.groupTarget) return { target: userTarget, group: null, greenMode: null };
   const g = window.groupTarget(userTarget);
-  return { target: g.target, group: g.group };
+  const mode = g.green ? g.green.mode : null;
+  const target = g.target;
+  if (g.group && mode) {
+    if (mode === 'leafy') target.park_v2 = 1;      // canopy ranking, as the leafy button does
+    else delete target.park_v2;                    // 'park' is a layer, 'off' is nothing
+  }
+  return { target: target, group: g.group, greenMode: g.group ? mode : null };
 }
 
 // Percentile-normalise every axis the SAME way, so the six sliders react in one
@@ -878,7 +889,7 @@ function SearchBar({ query, setQuery, onSubmit, onClear, hasResults }) {
   );
 }
 
-function ChipRow({ activeKind, onVibe, onPreset, onCategory }) {
+function ChipRow({ activeKind, onVibe, onPreset, onCategory, group }) {
   const t = React.useContext(ThemeCtx);
   const scRef = React.useRef(null);
   // drag-to-scroll: the row overflows but the scrollbar is hidden and a desktop
@@ -909,7 +920,11 @@ function ChipRow({ activeKind, onVibe, onPreset, onCategory }) {
       onPointerCancel={onPointerUp} onClickCapture={onClickCapture} onWheel={onWheel}
       style={{ display: 'flex', gap: 7, overflowX: 'auto', padding: '10px 2px 2px',
         WebkitOverflowScrolling: 'touch', touchAction: 'pan-x', cursor: 'grab', userSelect: 'none' }}>
-      <button onClick={onVibe} style={chip(activeKind === 'vibe')}>✦ My vibe</button>
+      {/* On a shared walk this chip is not "mine" any more — it ranks on what the group
+          settled together, so it says so. Walking alone the wording is unchanged. */}
+      <button onClick={onVibe} style={chip(activeKind === 'vibe')}>
+        {group ? `✦ Our vibe · ${group.count + 1}` : '✦ My vibe'}
+      </button>
       {VIBE_PRESETS.map(p => (
         <button key={p.id} onClick={() => onPreset(p)}
           style={chip(activeKind === 'preset:' + p.id)}>{p.emoji} {p.label}</button>
@@ -1043,6 +1058,136 @@ function VibeSlidersPanel({ onVibeChange, onClose }) {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   OUR VIBE — the group's settled vibe, shown where "My vibe" shows
+   the personal sliders. Read-only on purpose: once a walk is shared
+   the target moves by AGREEMENT, so my sliders no longer steer the
+   ranking (see buildGroupMembers in theme.jsx). Showing draggable
+   sliders here would promise control this screen doesn't have; what
+   it can honestly do is show WHAT was agreed, and where each person
+   stands on it, with one tap back to the place it can be changed.
+   ============================================================ */
+function OurVibePanel({ onClose, onOpenGroup }) {
+  const t = React.useContext(ThemeCtx);
+  // The negotiation lives on other phones too, so re-read on the poll's events rather
+  // than snapshotting it once at mount.
+  const [rev, bump] = React.useState(0);
+  React.useEffect(() => {
+    const on = () => bump(x => x + 1);
+    window.addEventListener('seoulwalk:walk', on);
+    window.addEventListener('seoulwalk:prefs', on);
+    return () => {
+      window.removeEventListener('seoulwalk:walk', on);
+      window.removeEventListener('seoulwalk:prefs', on);
+    };
+  }, []);
+  const gt = React.useMemo(() => (window.groupTarget ? window.groupTarget() : null), [rev]);
+  if (!gt || !gt.group) return null;
+  const members = gt.members || [];
+  const axes = gt.axes || [];
+  const live = axes.filter(a => !a.idle || a.applied);
+  const idle = axes.filter(a => a.idle && !a.applied);
+  const pct = v => `${Math.max(0, Math.min(1, v)) * 100}%`;
+  const green = gt.green || null;
+  const GREEN_LABEL = { off: 'no green detour', leafy: 'leafy street', park: 'park' };
+  const wordFor = (a) => {
+    if (a.applied) return { text: 'settled together', color: 'var(--good)' };
+    if (a.pending) return { text: 'offer waiting — not ranked on yet', color: 'var(--ink)' };
+    // An unsettled disagreement is genuinely OUT of the ranking (groupTarget drops it), so
+    // the panel says so instead of pointing at a midpoint the map isn't using.
+    if (a.conflict) return { text: 'no common ground — left out of the walk', color: MAP_PAL.accent };
+    return { text: 'you all overlap here', color: 'var(--ink-soft)' };
+  };
+  // Only draw the agreed marker where the map is actually ranking on it.
+  const ranksOn = a => !!(a.applied || !a.conflict);
+  return (
+    <div style={{ marginTop: 8, background: 'var(--card)', border: '1px solid var(--line)', borderRadius: t.radius,
+      boxShadow: 'var(--shadow)', padding: '10px 12px 12px', maxHeight: '48vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9, flex: '0 0 auto' }}>
+        <span style={{ fontFamily: t.fontMono, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--accent)' }}>
+          Our vibe · {members.length} people
+        </span>
+        <button onClick={onClose} aria-label="Close our vibe"
+          style={{ width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--line)', background: 'var(--card-2)',
+            color: 'var(--ink-soft)', cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+      </div>
+      <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 11 }}>
+        {live.map(a => {
+          const w = wordFor(a);
+          return (
+            <div key={a.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--ink)' }}>{a.left}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--ink)' }}>{a.right}</span>
+              </div>
+              <div style={{ position: 'relative', height: 18, display: 'flex', alignItems: 'center' }}>
+                <div style={{ position: 'absolute', left: 0, right: 0, height: 3, borderRadius: 999, background: 'var(--line)' }} />
+                {/* the zone the group holds in common (or the one it agreed to) */}
+                {a.band && (
+                  <div style={{ position: 'absolute', left: pct(a.band[0]), width: pct(a.band[1] - a.band[0]),
+                    height: 7, borderRadius: 999, background: 'var(--accent)', opacity: a.applied ? 0.5 : 0.28 }} />
+                )}
+                {/* where each person stands, so "our vibe" never hides whose it is */}
+                {members.map(m => {
+                  const r = a.ranges[m.id]; if (!r) return null;
+                  return <span key={m.id} title={m.name}
+                    style={{ position: 'absolute', left: pct((r[0] + r[1]) / 2), transform: 'translateX(-50%)',
+                      width: 7, height: 7, borderRadius: '50%', background: m.hue, border: '1.5px solid var(--card)' }} />;
+                })}
+                {/* the agreed spot the map actually ranks on */}
+                {a.center != null && ranksOn(a) && (
+                  <span style={{ position: 'absolute', left: pct(a.center), transform: 'translateX(-50%) rotate(45deg)',
+                    width: 9, height: 9, borderRadius: 2, background: a.applied ? 'var(--ink)' : 'transparent',
+                    border: `2px solid ${a.applied ? 'var(--ink)' : 'var(--ink-faint)'}` }} />
+                )}
+              </div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: w.color, marginTop: 2 }}>{w.text}</div>
+            </div>
+          );
+        })}
+        {live.length === 0 && (
+          <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', textAlign: 'center', padding: '4px 0' }}>
+            None of you has declared a preference yet.
+          </div>
+        )}
+        {/* Greenery isn't a bipolar axis (two doses of one wish, no opposite pole), so it
+            gets a line of its own rather than a track — and it drives the map's leafy/park
+            mode, which is why it belongs here and not only on the group screen. */}
+        {green && !green.idle && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, borderTop: '1px solid var(--line)', paddingTop: 9 }}>
+            <span style={{ fontSize: 12, lineHeight: 1 }}>{green.mode === 'park' ? '🌳' : '🍃'}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, lineHeight: 1.35, color: 'var(--ink-soft)' }}>
+              <b style={{ color: 'var(--ink)' }}>Greenery: {GREEN_LABEL[green.mode]}</b>
+              {green.applied ? ' — agreed together' : green.pending ? ' — offer waiting' : ' — the strongest wish here'}
+            </span>
+          </div>
+        )}
+        {idle.length > 0 && (
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontFamily: t.fontMono, fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-faint)' }}>Not ranked on</span>
+            {idle.map(a => (
+              <span key={a.id} style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--ink-faint)',
+                border: '1px dashed var(--line-strong)', borderRadius: 999, padding: '3px 8px' }}>{a.left} ↔ {a.right}</span>
+            ))}
+          </div>
+        )}
+        <div style={{ borderTop: '1px solid var(--line)', paddingTop: 9, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ flex: '1 1 120px', fontSize: 10.5, lineHeight: 1.35, color: 'var(--ink-faint)' }}>
+            Moves by agreement, not by dragging — your own sliders don't steer a shared walk.
+          </span>
+          {onOpenGroup && (
+            <button onClick={onOpenGroup}
+              style={{ flex: '0 0 auto', border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--ink)',
+                borderRadius: 999, padding: '6px 11px', fontFamily: t.fontUI, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+              Group · axes →
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1397,7 +1542,7 @@ function GpsBadge({ status }) {
 /* ============================================================
    THE MAP SCREEN
    ============================================================ */
-function RealMapScreen() {
+function RealMapScreen({ go }) {
   const t = React.useContext(ThemeCtx);
   const mapEl = React.useRef(null);
   const mapRef = React.useRef(null);
@@ -1456,6 +1601,23 @@ function RealMapScreen() {
   const [walkOptions, setWalkOptions] = React.useState(null);// proposed walks joining the vibe streets
   const [vibeStreets, setVibeStreets] = React.useState(null);// the street list to return to from a walk
   const routeTargetRef = React.useRef(null);                 // the vibe target the streets came from
+  // Friends mode. `group` is {count, names} while a shared walk has other people on it —
+  // it decides the wording ("Our vibe"), which vibe panel opens, and who may pick the route.
+  const [group, setGroup] = React.useState(
+    () => (window.groupTarget ? window.groupTarget().group : null));
+  // The route the leader picked, when it wasn't me: what the follower's map is drawing.
+  const [routeFrom, setRouteFrom] = React.useState(null);     // display name of the picker
+  const leaderId = () => {
+    const S = window.StudyAPI || {};
+    const w = S.currentWalk && S.currentWalk();
+    return w ? w.host_id : null;
+  };
+  const iAmLeader = () => {
+    const S = window.StudyAPI || {};
+    const me = S.myParticipantId && S.myParticipantId();
+    const host = leaderId();
+    return !!(host != null && me != null && host === me);
+  };
   // Build the favorite object for a result — its real geometry stored as a
   // compact thumbnail so the profile can draw the street's actual shape.
   function favFromResult(r) {
@@ -2025,7 +2187,10 @@ function RealMapScreen() {
   // gets the segmented route (drawRoute); the sheet gets the marquee anticipation
   // card + the ordered steps. `marquee` = the walk's strongest vibe street; we look
   // up its curated photo + LLM ambiance sentence to preview what's coming.
-  function chooseWalk(opt, i) {
+  // `shared` is set when this route arrived from the leader's phone rather than from a tap
+  // here: { by } is who picked it. It changes two things — the telemetry (following is not
+  // choosing) and the fact that we must NOT re-publish it, which would be a feedback loop.
+  function chooseWalk(opt, i, shared) {
     // Marquee = the street to preview. Prefer a vibe street that actually HAS a
     // photo (the scarcest asset), then one with a sentence, else the strongest
     // (reward-picked in makeWalkOptions) — so the anticipation card shows an image
@@ -2053,17 +2218,35 @@ function RealMapScreen() {
     });
     setRouteSeq(seq);
     setResults([]); setSelected(null); setSheetOpen(true);
+    setRouteFrom(shared ? (shared.by || 'the leader') : null);
     drawRoute(opt);
-    // study telemetry: record the proposed route and that it was chosen
-    if (window.StudyAPI) {
-      window.StudyAPI.logRoute({
-        route_type: 'vibe-walk',
-        geojson: opt.line && opt.line.geometry,
-        length_m: opt.len,
-        est_min: opt.len ? Math.round(opt.len / WALK_SPEED_M_MIN) : null,
-        params: { option_index: i, where: opt.where, areas: opt.areas },
-      }).then(rid => { if (rid) window.StudyAPI.logRouteChoice(rid); });
+    const S = window.StudyAPI;
+    if (!S) return;
+    if (shared) {
+      // Following someone else's pick is not a route choice of mine, and logging it as one
+      // would put a decision in the data that this participant never made.
+      if (S.logEvent) S.logEvent('walk_route_followed', { by: shared.by || null, label: opt.label || null });
+      return;
     }
+    // The leader's tap decides for everyone: push the option out so the other phones draw
+    // this very route. `isVibe` is a function (it can't cross the wire) and nothing that
+    // draws the route needs it. Only the host is allowed to publish — the server refuses
+    // anyone else — so a guest tapping an option is just looking at it on their own map.
+    if (group && iAmLeader() && S.publishWalkRoute) {
+      const { isVibe, ...wire } = opt;   // eslint-disable-line no-unused-vars
+      S.publishWalkRoute(wire, {
+        label: opt.label || null, min: opt.min || null, len_m: opt.len || null,
+        where: opt.where || null, yours: (opt.yours || []).length,
+      });
+    }
+    // study telemetry: record the proposed route and that it was chosen
+    S.logRoute({
+      route_type: 'vibe-walk',
+      geojson: opt.line && opt.line.geometry,
+      length_m: opt.len,
+      est_min: opt.len ? Math.round(opt.len / WALK_SPEED_M_MIN) : null,
+      params: { option_index: i, where: opt.where, areas: opt.areas, leader: !!(group && iAmLeader()) },
+    }).then(rid => { if (rid) S.logRouteChoice(rid); });
   }
   // Back to the vibe street list from the options / a drawn route.
   function backToStreets() { if (routeTargetRef.current) runVibe(); else clearSearch(); }
@@ -2102,37 +2285,105 @@ function RealMapScreen() {
   // in-map sliders. Collapse the results sheet so the map stays visible between the
   // panel (top) and the sheet peek (bottom) while the user tunes the vibe.
   function runVibe() {
-    greenModeRef.current = readGreenMode();
     const g = mergeTargetWithGroup(readVibeTarget());
+    // On a shared walk the greenery mode is the group's, not this phone's buttons.
+    greenModeRef.current = g.greenMode || readGreenMode();
     runVibeWithTarget(g.target, true, VIBE_SLIDERS_FIT_PAD, g.group);
     setShowSliders(true); setSheetOpen(false);
   }
   // Live re-rank as the in-map sliders move — no camera refit (fit=false).
   function onVibeSlidersChange(vals, off, greenMode) {
-    greenModeRef.current = greenMode;
     const g = mergeTargetWithGroup(targetFromSliders(vals, off, greenMode));
+    greenModeRef.current = g.greenMode || greenMode;
     runVibeWithTarget(g.target, false, undefined, g.group);
   }
+  // ---- friends mode: the group's vibe, and the leader's route ----------------------
+  // Who picked the route we are following (for the banner). The walk carries the names.
+  function memberName(pid) {
+    const S = window.StudyAPI || {};
+    const w = S.currentWalk && S.currentWalk();
+    const m = w && (w.members || []).find(x => x.participant_id === pid);
+    return (m && m.display_name) || 'the leader';
+  }
+  // Draw a route somebody else picked, exactly as they see it.
+  function followSharedRoute(entry) {
+    if (!entry || !entry.route) return false;
+    const map = mapRef.current;
+    if (!map || !map.getSource('route')) return false;
+    setShowSliders(false);
+    chooseWalk(entry.route, -1, { by: memberName(entry.by) });
+    return true;
+  }
+
+  // The negotiation lives on the other phones too: an accord settled over there must show
+  // up here, both in the "Our vibe" panel and in the ranking itself — a map still drawing
+  // last minute's target while the group screen shows the new one tells two stories. Only
+  // while the vibe view is up, and never refitting the camera (the walker is reading it).
+  React.useEffect(() => {
+    const sync = () => {
+      const g = window.groupTarget ? window.groupTarget() : null;
+      setGroup(g ? g.group : null);
+      if (kind !== 'vibe' || !g) return;
+      const merged = mergeTargetWithGroup(readVibeTarget());
+      greenModeRef.current = merged.greenMode || readGreenMode();
+      runVibeWithTarget(merged.target, false, undefined, merged.group);
+    };
+    window.addEventListener('seoulwalk:walk', sync);
+    window.addEventListener('seoulwalk:prefs', sync);
+    return () => {
+      window.removeEventListener('seoulwalk:walk', sync);
+      window.removeEventListener('seoulwalk:prefs', sync);
+    };
+  }, [kind]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The leader picked (or cleared) a route while I'm on this screen → draw the same walk.
+  React.useEffect(() => {
+    const onRoute = e => {
+      const entry = e.detail;
+      // The leader went back to the options. The route stays drawn — the group may well be
+      // walking it — but it is no longer THE pick, and the screen has to stop implying it is.
+      if (!entry || !entry.route) {
+        if (routeFrom) setStatus('The leader is looking at other options…');
+        setRouteFrom(null);
+        return;
+      }
+      if (entry.mine) return;                                       // it's already on my map
+      followSharedRoute(entry);
+    };
+    window.addEventListener('seoulwalk:walkroute', onRoute);
+    return () => window.removeEventListener('seoulwalk:walkroute', onRoute);
+  }, [routeFrom]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---- arriving from 'Find our spot' (group.jsx) ----------------------------------
   // The group screen computes nothing itself: it sets window.SeoulMapIntent and comes
   // here. This is where the negotiation finally becomes geography — rank the streets on
   // the agreed target, then build the walks that join them, in one go.
   //
-  // Everything that computation needs arrives asynchronously (the vibe scores, the
-  // routing graph, the departure node), so readiness is polled rather than assumed, in
-  // two stages: the ranking goes up as soon as the scores are there — no reason to stare
-  // at an empty map while a 6 MB graph downloads — and the walks follow when the graph
-  // lands. The intent is consumed immediately, so this can never run twice.
+  // Everything that computation needs arrives asynchronously (the vibe scores, the routing
+  // graph, the departure node), so readiness is polled rather than assumed, in two stages:
+  // the ranking goes up as soon as the scores are there — no reason to stare at an empty
+  // map while the graph downloads — and the walks follow when the graph lands. The intent
+  // is consumed immediately, so this can never run twice.
   React.useEffect(() => {
+    const S = window.StudyAPI || {};
     const intent = window.SeoulMapIntent;
-    if (!intent || intent.kind !== 'group-walk') return;
-    window.SeoulMapIntent = null;
+    const wantIntent = !!(intent && intent.kind === 'group-walk');
+    if (wantIntent) window.SeoulMapIntent = null;
+    // A route the leader has ALREADY picked wins over rebuilding the options: the group is
+    // past that decision, and this screen may have been opened precisely to see it.
+    const picked = () => {
+      const r = S.currentWalkRoute && S.currentWalkRoute();
+      return r && r.route && !r.mine ? r : null;
+    };
+    if (!wantIntent && !picked()) return;
     let ranked = null;
     const attempt = () => {
+      const p = picked();
+      if (p) return followSharedRoute(p);
       if (!ranked) {
         if (!vibeFeats.current || !vibeFeats.current.length) return false;
-        greenModeRef.current = readGreenMode();
         const g = mergeTargetWithGroup(readVibeTarget());
+        greenModeRef.current = g.greenMode || readGreenMode();
         // Nothing declared by anyone → there is no target to rank on, and the honest
         // answer is to say so rather than to draw a walk built on nothing.
         if (!Object.keys(g.target).length) { setStatus('No one on this walk has declared a preference yet.'); return true; }
@@ -2407,10 +2658,15 @@ function RealMapScreen() {
       <div style={{ position: 'absolute', top: 8, left: 14, right: 14, zIndex: 10 }}>
         <SearchBar query={query} setQuery={setQuery} onSubmit={runFreeText} onClear={clearSearch}
           hasResults={results.length > 0} />
-        <ChipRow activeKind={kind} onVibe={runVibe} onPreset={runPreset} onCategory={runCategory} />
-        {/* compact live vibe sliders — opened by the "✦ My vibe" chip */}
-        {showSliders && <VibeSlidersPanel onVibeChange={onVibeSlidersChange}
-          onClose={() => { setShowSliders(false); setSheetOpen(true); }} />}
+        <ChipRow activeKind={kind} onVibe={runVibe} onPreset={runPreset} onCategory={runCategory} group={group} />
+        {/* The same slot, two panels. Alone: my sliders, live. On a shared walk: what the
+            group settled — because there my sliders no longer move the ranking, so showing
+            them here would be a control that does nothing. */}
+        {showSliders && (group
+          ? <OurVibePanel onClose={() => { setShowSliders(false); setSheetOpen(true); }}
+              onOpenGroup={go ? () => go('group') : null} />
+          : <VibeSlidersPanel onVibeChange={onVibeSlidersChange}
+              onClose={() => { setShowSliders(false); setSheetOpen(true); }} />)}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           <GpsBadge status={gpsStatus} />
           {status && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)',
@@ -2478,6 +2734,25 @@ function RealMapScreen() {
                   cursor: 'pointer', fontSize: 12.5, fontWeight: 700, padding: '2px 0 4px' }}>
                 ‹ {kind === 'route' && walkOptions ? 'other options' : 'back to streets'}
               </button>
+            )}
+
+            {/* Friends mode: say plainly who decides, so a guest tapping an option doesn't
+                believe they just chose for everybody. */}
+            {kind === 'walk-options' && group && (
+              <div style={{ fontSize: 11.5, lineHeight: 1.4, color: 'var(--ink-soft)', padding: '0 0 8px' }}>
+                {iAmLeader()
+                  ? <React.Fragment>You started this walk, so the one you tap becomes <b style={{ color: 'var(--ink)' }}>the group's</b> — it appears on their maps too.</React.Fragment>
+                  : <React.Fragment><b style={{ color: 'var(--ink)' }}>{memberName(leaderId())}</b> picks for the group. Tapping one here only shows it on your own map.</React.Fragment>}
+              </div>
+            )}
+            {kind === 'route' && routeFrom && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8, padding: '8px 10px',
+                borderRadius: t.radiusSm, background: 'var(--accent-soft)', border: '1px solid var(--line)' }}>
+                <span style={{ fontSize: 13, lineHeight: 1 }}>🧭</span>
+                <span style={{ fontSize: 11.5, lineHeight: 1.35, color: 'var(--ink-soft)' }}>
+                  Following <b style={{ color: 'var(--ink)' }}>{routeFrom}</b>'s pick — the same walk is on their map.
+                </span>
+              </div>
             )}
 
             {/* ROUTE view: the drawn walk as a départ→…→arrivée sequence with an

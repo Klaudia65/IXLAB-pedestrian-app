@@ -804,7 +804,51 @@ function reconcileGroupAxes(userVec, membersOverride) {
       accepts: (s && s.accepts) || [],
     };
   });
-  return { members, ids, byId, axes, settlements };
+  return { members, ids, byId, axes, settlements, green: reconcileGreenery(members, settlements) };
+}
+
+// ---- greenery: the one dimension with a single pole ---------------------------------
+// Leafy / Park is not a slider between two opposites. There is no "I want NO green" to
+// hold against it, so a DISAGREEMENT here cannot even be expressed in the data — only
+// different strengths of the same wish. That is why it was missing from the group axes
+// (reconcileGroupAxes only walks the bipolar ones) and why it needs its own rule:
+//   · nothing settled → the strongest wish wins, park over leafy over nothing, because
+//     nobody present is against green and indifference must never block;
+//   · anyone may settle it explicitly, INCLUDING on 'off' — that is the only way a group
+//     can decide against the green detour, since the app cannot infer an objection it has
+//     no way to record.
+const GREEN_MODES = ['off', 'leafy', 'park'];
+function greenWishOf(m) {
+  const lv = (m.levels || {}).park;
+  const v = (m.vec || {}).park;
+  if (lv === 'off' || v == null || isNaN(v)) return 'off';
+  if (v >= 0.5) return 'park';          // "take us to a park"
+  if (v > 0) return 'leafy';            // "a green street is enough"
+  return 'off';
+}
+function reconcileGreenery(members, settlements) {
+  const ids = members.map(m => m.id);
+  const wishes = {};
+  members.forEach(m => { wishes[m.id] = greenWishOf(m); });
+  const strongest = ids.reduce((best, id) =>
+    (GREEN_MODES.indexOf(wishes[id]) > GREEN_MODES.indexOf(best) ? wishes[id] : best), 'off');
+  const s = (settlements && settlements.green && settlements.green.how === 'green') ? settlements.green : null;
+  // The offer asks something of everyone it doesn't already grant: being handed 'leafy'
+  // when you wanted a park is a concession, and being handed a park when you wanted
+  // nothing is a detour. Both deserve a yes; whoever already wanted exactly this doesn't.
+  const asks = s ? ids.filter(id => wishes[id] !== s.mode) : [];
+  const agreed = s ? settlementAgreed(s, asks) : false;
+  return {
+    id: 'green', modes: GREEN_MODES, wishes,
+    mode: agreed ? s.mode : strongest,
+    byDefault: !agreed,                  // the strongest wish standing in for a decision
+    applied: agreed ? s : null,
+    pending: s && !agreed ? s : null,
+    asks: asks, accepts: (s && s.accepts) || [],
+    turn: s ? s.by : null,
+    // nothing wished, nothing settled → greenery is simply not part of this walk
+    idle: !agreed && strongest === 'off',
+  };
 }
 
 // THE group vibe target — the single value the group screen AND the map rank on.
@@ -826,13 +870,24 @@ function groupTarget(userVecOverride) {
   rec.axes.forEach(a => {
     negotiated[a.id] = true;
     if (a.idle) { delete target[a.id]; return; }        // nobody cares → don't rank on it
+    // A DISAGREEMENT NOBODY SETTLED IS DROPPED, not averaged. The midpoint between two
+    // opposite tastes is a place neither person asked for, and "where most of you agree"
+    // is a majority the outlier never consented to — ranking on either invents a
+    // preference the group does not hold. Left out, the walk is chosen on what they DID
+    // agree on, and the axis comes back the moment they settle it.
+    if (a.conflict && !a.applied) { delete target[a.id]; return; }
     // An axis I'm indifferent about but my friends care about DOES enter the target
     // here, at the point they agreed on: "doesn't matter to me" means I never block,
     // not that the group has to drop the dimension.
     target[a.id] = clamp(a.center * 2 - 1, -1, 1);      // slider space → axis space
   });
-  // Axes outside the negotiated set (greenery has one pole, so there is no middle to
-  // meet at) keep the plain average over whoever has an opinion, as before.
+  // Greenery is decided as a MODE (see reconcileGreenery), not averaged, so the `park`
+  // axis follows that decision instead of drifting to the mean of everyone's slider.
+  negotiated.park = true;
+  if (rec.green.idle) delete target.park;
+  else target.park = rec.green.mode === 'park' ? 1 : 0.5;
+  // Any axis still outside the negotiated set keeps the plain average over whoever has an
+  // opinion, as before.
   Object.keys(target).forEach(ax => {
     if (negotiated[ax]) return;
     const votes = [target[ax]];
@@ -840,7 +895,7 @@ function groupTarget(userVecOverride) {
     target[ax] = votes.reduce((a, b) => a + b, 0) / votes.length;
   });
   return {
-    target, axes: rec.axes, members: rec.members,
+    target, axes: rec.axes, members: rec.members, green: rec.green,
     group: { count: others.length, names: others.map(m => m.name) },
   };
 }
@@ -1128,6 +1183,7 @@ Object.assign(window, {
   moveSettlement, clearSettlement, clearGroupSettlements, defaultHow, applySettlement,
   settlementLanding, settlementNeeds, settlementAgreed,
   proposeTrade, myMemberId, levelsFromVector, myWalkSnapshot,
+  GREEN_MODES, greenWishOf, reconcileGreenery,
   buildGroupMembers, reconcileGroupAxes, groupTarget,
   loadVibeStreets, recommendForVector, useRecommendations,
   cardById, readPairOverride, resolveSwipePairs,

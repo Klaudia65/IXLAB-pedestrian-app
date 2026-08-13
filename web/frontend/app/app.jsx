@@ -333,6 +333,22 @@ function App() {
     return () => window.removeEventListener('seoulwalk:walk', onWalk);
   }, [sessionReady]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The leader picking the route is the moment the group starts walking, and it is the one
+  // thing everyone has to be looking at: whatever screen a follower is on, bring them to
+  // the map, where the route they now share is drawn. Their own pick doesn't move them —
+  // they are already there — and clearing the pick doesn't either, to avoid yanking anyone
+  // around mid-decision.
+  React.useEffect(() => {
+    if (!sessionReady) return;
+    function onRoute(e) {
+      const entry = e.detail;
+      if (!entry || !entry.route || entry.mine) return;
+      setScreen('map2');
+    }
+    window.addEventListener('seoulwalk:walkroute', onRoute);
+    return () => window.removeEventListener('seoulwalk:walkroute', onRoute);
+  }, [sessionReady]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // GPS watch + trace upload for the whole session — see the notes above. Gated on
   // the session so the permission prompt lands after the consent screen, not before.
   React.useEffect(() => {
@@ -380,7 +396,7 @@ function App() {
     landing: <LandingScreen go={go} />,
     curate: <CurateScreen go={go} />,
     sliders: <SlidersScreen go={go} />,
-    map2: <RealMapScreen />,
+    map2: <RealMapScreen go={go} />,
     social: <SocialScreen go={go} />,
     group: <GroupScreen go={go} />,
     profile: <ProfileScreen go={go} />,

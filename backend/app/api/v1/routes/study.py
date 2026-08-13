@@ -47,6 +47,7 @@ from app.models.schemas.study import (
     WalkInviteIn,
     WalkMemberOut,
     WalkOut,
+    WalkRouteIn,
     WalkStateIn,
     WalkStatusIn,
 )
@@ -511,7 +512,8 @@ async def _walk_out(db: AsyncSession, walk_id: int, me: int) -> WalkOut:
     """Assemble the whole walk as the client consumes it: the negotiation document,
     its version, and every member with the taste they froze when they accepted."""
     w = (await db.execute(text("""
-        SELECT id, host_id, status, state, version FROM walk WHERE id = :wid
+        SELECT id, host_id, status, state, version, route_by, route_at, route_summary
+          FROM walk WHERE id = :wid
     """), {"wid": walk_id})).mappings().one_or_none()
     if w is None:
         raise HTTPException(status_code=404, detail="unknown walk")
@@ -526,6 +528,7 @@ async def _walk_out(db: AsyncSession, walk_id: int, me: int) -> WalkOut:
         walk_id=w["id"], host_id=w["host_id"], me=me, status=w["status"],
         state=w["state"] or {}, version=w["version"],
         members=[WalkMemberOut(**r) for r in rows],
+        route_at=w["route_at"], route_by=w["route_by"], route_summary=w["route_summary"],
     )
 
 
@@ -759,6 +762,55 @@ async def patch_walk_state(
     if body.action:
         await _log_walk_event(db, walk_id, pid, body.action, body.axis, {"patch": body.patch})
     return {"ok": True, "conflict": False, "version": version, "state": state}
+
+
+@router.post("/{session_id}/walks/{walk_id}/route", response_model=WalkOut)
+async def set_walk_route(
+    session_id: int, walk_id: int, body: WalkRouteIn, db: AsyncSession = Depends(get_db)
+):
+    """The LEADER picks which of the proposed walks the group actually does; every other
+    phone then draws that same route. Host-only, like /status: three people each drawing a
+    different route on their own screen is not a group walk, and 'we follow the person who
+    started it' is the rule a group can hold in its head without an extra negotiation.
+
+    The document is stored verbatim and never read by the server — it is the map's own
+    option object, and the phones that draw it are the phones that built it. Posting
+    route=null clears the pick, which puts everyone back on the options."""
+    pid = await _participant_of_session(db, session_id)
+    host_id = (await db.execute(
+        text("SELECT host_id FROM walk WHERE id = :wid"), {"wid": walk_id}
+    )).scalar_one_or_none()
+    if host_id is None:
+        raise HTTPException(status_code=404, detail="unknown walk")
+    if host_id != pid:
+        raise HTTPException(status_code=403, detail="only the host picks the walk")
+    await db.execute(text("""
+        UPDATE walk
+           SET route = CAST(:route AS jsonb), route_summary = CAST(:summary AS jsonb),
+               route_by = :pid, route_at = NOW()
+         WHERE id = :wid
+    """), {
+        "wid": walk_id, "pid": pid,
+        "route": json.dumps(body.route) if body.route is not None else None,
+        "summary": json.dumps(body.summary) if body.summary is not None else None,
+    })
+    await _log_walk_event(db, walk_id, pid, "route", None, body.summary)
+    return await _walk_out(db, walk_id, pid)
+
+
+@router.get("/{session_id}/walks/{walk_id}/route")
+async def get_walk_route(session_id: int, walk_id: int, db: AsyncSession = Depends(get_db)):
+    """The picked route in full — geometry included. Fetched once per pick (the poll only
+    carries `route_at`), by any member of the walk."""
+    pid = await _participant_of_session(db, session_id)
+    await _require_member(db, walk_id, pid)
+    r = (await db.execute(text("""
+        SELECT route, route_summary, route_by, route_at FROM walk WHERE id = :wid
+    """), {"wid": walk_id})).mappings().one_or_none()
+    if r is None:
+        raise HTTPException(status_code=404, detail="unknown walk")
+    return {"route": r["route"], "summary": r["route_summary"],
+            "by": r["route_by"], "at": r["route_at"]}
 
 
 @router.post("/{session_id}/walks/{walk_id}/status", response_model=WalkOut)

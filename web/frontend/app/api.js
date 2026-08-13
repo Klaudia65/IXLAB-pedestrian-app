@@ -256,9 +256,14 @@
     // Someone is dragging a cursor: run the loop fast for a moment so their movement
     // arrives as movement rather than as a jump.
     if (walkIsMoving(walkCache)) walkFastUntil = Date.now() + WALK_LIVE_FOR;
+    // Keep the picked route in step with whatever walk we just published, before the
+    // 'seoulwalk:walk' listeners run — a screen re-rendering on that event should not read
+    // a route that belongs to the previous walk.
+    syncWalkRoute(walkCache);
     var changed = !prev !== !walkCache
       || (prev && walkCache && (prev.version !== walkCache.version
         || prev.status !== walkCache.status
+        || prev.route_at !== walkCache.route_at
         || JSON.stringify(prev.members) !== JSON.stringify(walkCache.members)));
     if (changed) {
       try { window.dispatchEvent(new CustomEvent('seoulwalk:walk', { detail: { walk: walkCache, previous: prev } })); } catch (e) {}
@@ -298,6 +303,67 @@
       } catch (e) {}
     }
     return invitesCache;
+  }
+
+  // --- the leader's picked route --------------------------------------------
+  // Only the HOST picks; every other phone draws the same walk. The poll carries a token
+  // (`route_at`) and a small summary, never the geometry — a few dozen KB of coordinates
+  // in a payload fetched every 2.5 s by every phone would be paid for again and again for
+  // a document that changes once. So when the token moves we fetch the route once and
+  // cache it here, which also lets a screen mounted LATER draw the current pick instead of
+  // waiting for the next one.
+  var walkRouteCache = null;     // { walk_id, at, by, mine, summary, route }
+  var walkRouteFetching = null;  // token being fetched, so a slow poll can't stampede
+  function currentWalkRoute() { return walkRouteCache; }
+  function emitWalkRoute(entry) {
+    walkRouteCache = entry;
+    try { window.dispatchEvent(new CustomEvent('seoulwalk:walkroute', { detail: entry })); } catch (e) {}
+    return entry;
+  }
+  function fetchWalkRoute(walkId) {
+    if (!sid()) return Promise.resolve(null);
+    return fetch(BASE_URL + '/sessions/' + sid() + '/walks/' + walkId + '/route', { headers: headers() })
+      .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
+      .catch(function (e) { console.warn('[StudyAPI] fetchWalkRoute failed', e); return null; });
+  }
+  // Reconcile the cache with a freshly-read walk. Called from emitWalk, so every path that
+  // publishes a walk keeps the route in step with it.
+  function syncWalkRoute(w) {
+    if (!w) { if (walkRouteCache) emitWalkRoute(null); return; }
+    var at = w.route_at || null;
+    if (walkRouteCache && walkRouteCache.walk_id === w.walk_id && walkRouteCache.at === at) return;
+    if (!at) { if (walkRouteCache) emitWalkRoute(null); return; }   // the pick was cleared
+    var mine = w.route_by != null && w.route_by === myParticipantId();
+    if (mine) {
+      // I published it, so the geometry is already on my screen — don't download my own
+      // route back. The token is still recorded, so the NEXT pick reads as a change.
+      walkRouteCache = { walk_id: w.walk_id, at: at, by: w.route_by, mine: true,
+        summary: w.route_summary || null, route: (walkRouteCache && walkRouteCache.route) || null };
+      return;
+    }
+    if (walkRouteFetching === at) return;
+    walkRouteFetching = at;
+    fetchWalkRoute(w.walk_id).then(function (r) {
+      walkRouteFetching = null;
+      if (!r || !r.route) return;
+      emitWalkRoute({ walk_id: w.walk_id, at: r.at || at, by: r.by, mine: false,
+        summary: r.summary || w.route_summary || null, route: r.route });
+    }, function () { walkRouteFetching = null; });
+  }
+
+  // Publish the option the leader tapped. Rejected server-side for anyone but the host.
+  function publishWalkRoute(route, summary) {
+    var wid = currentWalkId();
+    if (!wid) return Promise.resolve(null);
+    return scoped('/walks/' + wid + '/route', { route: route || null, summary: summary || null })
+      .then(function (w) {
+        if (!w || !w.walk_id) return null;
+        // Seed the cache with the geometry I already have, so syncWalkRoute doesn't fetch
+        // my own pick back when the walk comes round.
+        walkRouteCache = { walk_id: w.walk_id, at: w.route_at, by: w.route_by, mine: true,
+          summary: w.route_summary || summary || null, route: route || null };
+        return emitWalk(w);
+      });
   }
 
   function refreshWalk() {
@@ -538,6 +604,7 @@
     currentWalk: currentWalk, currentWalkId: currentWalkId, refreshWalk: refreshWalk,
     createWalk: createWalk, answerWalk: answerWalk, answerWalkById: answerWalkById,
     inviteToWalk: inviteToWalk, pendingInvites: pendingInvites,
+    publishWalkRoute: publishWalkRoute, currentWalkRoute: currentWalkRoute,
     setWalkStatus: setWalkStatus, patchWalkState: patchWalkState,
     startWalkPolling: startWalkPolling, stopWalkPolling: stopWalkPolling,
     refreshFriends: refreshFriends, refreshFriendActivity: refreshFriendActivity,

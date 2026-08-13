@@ -264,6 +264,16 @@ CREATE TABLE IF NOT EXISTS walk (
 );
 CREATE INDEX IF NOT EXISTS idx_walk_host ON walk (host_id);
 
+-- The route the LEADER picked, so every phone can follow the same walk. `route` is the
+-- whole option document the map draws (geometry + the ordered legs), which is why it is
+-- fetched on its own route rather than ridden along on every 2.5 s poll; `route_summary`
+-- is the handful of fields a banner needs (label, minutes, length), small enough to travel
+-- with the walk itself. `route_at` is the change token followers compare against.
+ALTER TABLE walk ADD COLUMN IF NOT EXISTS route         JSONB;
+ALTER TABLE walk ADD COLUMN IF NOT EXISTS route_summary JSONB;
+ALTER TABLE walk ADD COLUMN IF NOT EXISTS route_by      INTEGER REFERENCES participant(id) ON DELETE SET NULL;
+ALTER TABLE walk ADD COLUMN IF NOT EXISTS route_at      TIMESTAMPTZ;
+
 -- Who is on a walk, and whether they have agreed to be on it. A walk opens with the
 -- host 'accepted' and everyone else 'invited'; nobody's taste enters the negotiation
 -- until they answer, which is what makes "the others have to accept" a real gate
