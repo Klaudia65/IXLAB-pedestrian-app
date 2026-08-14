@@ -272,6 +272,19 @@ function readGreenMode() {
   catch (e) { return 'off'; }
 }
 
+// Turn off the "who's coming" toggles from the profile. Leaving a shared walk has to
+// clear these too: with no walk on the server, groupTarget() falls back to exactly
+// these toggles, so a walker who just left would land back in a group ("Our vibe · 2")
+// instead of alone. Fires 'seoulwalk:prefs' so the ranking re-derives at once.
+function clearJoiningFriends() {
+  try {
+    const had = Object.keys(JSON.parse(localStorage.getItem('seoulwalk.profile.friends') || '{}')).length;
+    localStorage.setItem('seoulwalk.profile.friends', '{}');
+    window.dispatchEvent(new CustomEvent('seoulwalk:prefs'));
+    return had;
+  } catch (e) { return 0; }
+}
+
 // Build a vibe target from in-memory slider state (values in [0,1] + dropped ids).
 // Factored out of readVibeTarget so the live in-map sliders can rank without a
 // localStorage round-trip (usePersist writes on a later effect tick).
@@ -449,12 +462,49 @@ function inJongno(lng, lat) {
   return lng >= JONGNO_BBOX[0] && lng <= JONGNO_BBOX[2]
       && lat >= JONGNO_BBOX[1] && lat <= JONGNO_BBOX[3];
 }
+// DEMO START — a departure point the tester places by hand (see the 📍 control on the
+// map). Persisted so an accidental reload mid-demo doesn't drop it, and so a walk can
+// be prepared on a laptop and picked up on the phone at the same spot. Stored already
+// snapped to a graph node. Anything malformed is treated as "not set" rather than
+// throwing: a corrupt key must never cost a study session.
+const DEMO_START_KEY = 'seoulwalk.demoStart';
+function readDemoStart() {
+  try {
+    const v = JSON.parse(localStorage.getItem(DEMO_START_KEY));
+    return Array.isArray(v) && v.length === 2 && isFinite(v[0]) && isFinite(v[1]) ? v : null;
+  } catch (e) { return null; }
+}
+function writeDemoStart(p) {
+  try { if (p) localStorage.setItem(DEMO_START_KEY, JSON.stringify(p)); else localStorage.removeItem(DEMO_START_KEY); }
+  catch (e) { /* private mode / quota — the demo start just won't survive a reload */ }
+}
+
 const WALK_MIN = 38;                 // the UPPER time budget
 const WALK_MIN_MIN = 25;             // walks may wrap up this early if good spots are close
 const WALK_SPEED_M_MIN = 80;         // ~4.8 km/h leisurely walking pace
 const WALK_BUDGET_M = WALK_MIN * WALK_SPEED_M_MIN;       // ≈ 3040 m — the ceiling
 const WALK_MIN_BUDGET_M = WALK_MIN_MIN * WALK_SPEED_M_MIN; // ≈ 2000 m — the floor
 const WALK_FAR_M = 380;              // once past the floor, stop rather than detour this far for the next spot
+
+// ---- SOFT LOOP -------------------------------------------------------------
+// The walk comes back NEAR where it started instead of ending anywhere. This is a
+// study requirement, not a routing whim: the participant answers the questionnaire
+// and starts the second session at the meeting point, so they must not be left a
+// tram ride away — and they must not have to retrace their own steps to get back,
+// which would make the return half of the walk worthless as exploration.
+// "Near" is deliberately a RADIUS, not the exact departure node: forcing the exact
+// spot bends the last stretch into an out-and-back, while a few minutes' walk away
+// is just as practical for meeting again.
+const LOOP_WALK = true;              // set false to go back to open-ended walks
+const LOOP_END_RADIUS_M = 300;       // "close enough to meet again" — ~4 min from the start
+const LOOP_RETRACE_PENALTY = 4;      // an already-walked metre costs this much when searching
+// 1.3 / 1.05 measured on the real Jongno graph: keeps every walk under ~40 min while
+// still threading ~6 vibe streets. Reserving less (1.2) buys one more street but lets
+// walks run to 41 min; reserving more (1.45) caps at 39 min and costs 200 m of walk.
+const LOOP_RETURN_SLACK = 1.3;       // the fresh way back is longer than the shortest way back
+const LOOP_OVERSHOOT = 1.05;         // the closing leg may exceed the budget by this much
+const LOOP_FRESH_W = 2;              // closing leg: 1 m retraced hurts as much as 2 m short of the floor
+const LOOP_SHAPE = 0.35;             // how strongly the walk drifts out then back (circuit vs out-and-back)
 
 // Iconic Jongno landmarks used to DESCRIBE a walk ("explore near Cheonggyecheon")
 // instead of listing street names. Coordinates are grounded in real data: the
@@ -554,14 +604,46 @@ function nearestNode(net, lng, lat) {
   return best;
 }
 
-// Dijkstra (binary min-heap) over edge LENGTHS from `src`, returning the distance
-// and back-pointers (previous node + edge) to every node. Used by the router to
-// route from the current point to the next worthwhile street.
-function dijkstra(adj, N, src) {
+// Can a walk plausibly be built from `node`? Two structural reasons it couldn't:
+//   · the node sits on an ISLAND — the pilot graph is 97% one component plus 28 small
+//     ones (footbridges, courtyard paths, cut-off alleys) with no room for a walk;
+//   · everything reachable is UNNAMED connectors — no named street means no scored
+//     street, and the router has no prize to collect.
+// The demo-start control tests this BEFORE accepting a tap, rather than letting the
+// failure surface three taps later as "couldn't build a walk". One flood fill, stopped
+// as soon as both conditions are met; metres are counted once per newly reached node,
+// which under-estimates — a lower bound is exactly what's wanted here.
+function canWalkFrom(net, idx, node, needM) {
+  const seen = new Set([node]), stack = [node];
+  let m = 0, named = false;
+  while (stack.length) {
+    const u = stack.pop();
+    for (const { to, ei, len } of idx.adj[u]) {
+      if (!named && net.edges[ei][3] >= 0) named = true;
+      if (seen.has(to)) continue;
+      seen.add(to); m += len;
+      if (m >= needM && named) return true;
+      stack.push(to);
+    }
+  }
+  // the flood ran dry: `named` may have flipped on the very last edge, so re-test
+  // rather than assuming the early exit above was the only way to succeed.
+  return m >= needM && named;
+}
+
+// Dijkstra (binary min-heap) from `src`, returning the cost and back-pointers
+// (previous node + edge) to every node. Used by the router to route from the
+// current point to the next worthwhile street.
+// `costOf(ei, len)` optionally re-prices an edge — the loop router charges 4× for
+// ground already walked, so shortest paths naturally prefer fresh streets. Because
+// the search cost is then no longer metres, `tlen` carries the TRUE length of that
+// same path: `dist` ranks, `tlen` budgets. Without costOf the two are identical.
+function dijkstra(adj, N, src, costOf) {
   const dist = new Float64Array(N).fill(Infinity);
+  const tlen = new Float64Array(N).fill(Infinity);
   const pN = new Int32Array(N).fill(-1);
   const pE = new Int32Array(N).fill(-1);
-  dist[src] = 0;
+  dist[src] = 0; tlen[src] = 0;
   const heap = [];
   const push = (d, n) => { heap.push([d, n]); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
   const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = 2 * i + 2; let s = i; if (l < heap.length && heap[l][0] < heap[s][0]) s = l; if (r < heap.length && heap[r][0] < heap[s][0]) s = r; if (s === i) break; [heap[s], heap[i]] = [heap[i], heap[s]]; i = s; } } return top; };
@@ -570,23 +652,32 @@ function dijkstra(adj, N, src) {
     const [d, u] = pop();
     if (d > dist[u]) continue;
     for (const { to, ei, len } of adj[u]) {
-      const nd = d + len;
-      if (nd < dist[to]) { dist[to] = nd; pN[to] = u; pE[to] = ei; push(nd, to); }
+      const nd = d + (costOf ? costOf(ei, len) : len);
+      if (nd < dist[to]) { dist[to] = nd; tlen[to] = tlen[u] + len; pN[to] = u; pE[to] = ei; push(nd, to); }
     }
   }
-  return { dist, pN, pE };
+  return { dist, tlen, pN, pE };
 }
 
-// Prize-collecting orienteering: build an OPEN walk (start fixed, end free) that
-// spends ~the time budget while maximising the vibe met on the way. Each step, we
-// Dijkstra from the current node, then pick a high-value UNVISITED street edge to
-// head for — scored by reward-per-detour (gain = edgeReward / distance-to-reach) —
-// route to it (collecting any fresh reward passed en route), traverse it, and
-// repeat until nothing worthwhile fits the remaining budget. Unlike a greedy
-// no-revisit trail, this never strands itself in a dead-end (it may walk back
+// Prize-collecting orienteering: build a SOFT-LOOP walk (start fixed, finish within
+// LOOP_END_RADIUS_M of it) that spends ~the time budget while maximising the vibe met
+// on the way. Each step, we Dijkstra from the current node, then pick a high-value
+// UNVISITED street edge to head for — scored by reward-per-detour (gain = edgeReward
+// / distance-to-reach) — route to it (collecting any fresh reward passed en route),
+// traverse it, and repeat until nothing worthwhile fits the remaining budget. Unlike
+// a greedy no-revisit trail, this never strands itself in a dead-end (it may walk back
 // through used streets to reach a new prize), so it actually fills the ~38 min.
 // A small random pick among the top few candidates (RCL) gives route variety, so
 // repeated calls yield distinct route options.
+//
+// Coming back near the start is enforced in three places, all cheap:
+//   · the way home is PAID IN ADVANCE — a prize is only reachable if the walk can
+//     still get back inside the radius afterwards (see backEst);
+//   · the Dijkstra charges LOOP_RETRACE_PENALTY× for ground already walked, so both
+//     the links between prizes and the closing leg prefer fresh streets;
+//   · a mild drift bias (LOOP_SHAPE) pushes outward in the first half of the budget
+//     and homeward in the second, which is what makes a circuit instead of a there-
+//     and-back. Then a final closing leg lands on the best node near the start.
 //
 // `opt` shapes the strategy:
 //   prizeIds     Set of street name-ids to restrict prizes to (else any street)
@@ -595,6 +686,8 @@ function dijkstra(adj, N, src) {
 //   detourExp    how hard proximity is favoured: gain = reward / (detour)^detourExp,
 //                so >1 makes the walk prefer NEARBY streets over far better ones
 //   avoidNames   streets to de-prioritise (for diversity across options) + penalty
+//   loop         false → the old open-ended walk (no return reserved, no closing leg)
+//   endRadiusM   how far from the start the walk may finish and still count as back
 // Orienteering is NP-hard; this is a fast heuristic (~0.1 s), not an optimum.
 function vibeRewardFn(net, idx, weights) {
   const A = net.axes.length;
@@ -622,6 +715,9 @@ function planWalk(net, idx, weights, startNode, budgetM, opt) {
   const parkEdges = opt.parkEdges || null;                     // edges inside a park walk (Park mode)
   const parkReward = opt.parkReward || 0;                      // vibe-reward bonus for stepping into a park
   const parkCapM = opt.parkCapM != null ? opt.parkCapM : 0.5 * budgetM;  // aim for ~half the walk inside parks, then head back to the vibe streets
+  const loop = opt.loop != null ? opt.loop : LOOP_WALK;         // finish near the start?
+  const endRadiusM = opt.endRadiusM != null ? opt.endRadiusM : LOOP_END_RADIUS_M;
+  const retraceP = opt.retracePenalty != null ? opt.retracePenalty : LOOP_RETRACE_PENALTY;
   const N = net.nodes.length;
   const { adj } = idx;
   const { reward: rewardOf } = vibeRewardFn(net, idx, weights);
@@ -631,10 +727,21 @@ function planWalk(net, idx, weights, startNode, budgetM, opt) {
   const isParkEdge = (ei) => !!(parkEdges && parkEdges.has(ei));
   const RCL = 3, MAX_STEPS = 60;
   const used = new Set();
+  // Fresh ground is cheaper to cross than ground already walked — this single
+  // re-pricing is what keeps the return leg off the outbound path.
+  const cost = (ei, l) => (used.has(ei) ? l * retraceP : l);
+  // Distance from the START to every node, in plain metres. Two uses: reserving the
+  // budget needed to get home, and knowing whether a candidate leads out or back.
+  const home = loop ? dijkstra(adj, N, startNode).dist : null;
+  // Metres the walk must still spend from `n` to be back inside the meeting radius.
+  // Slack because the way home avoids what we already walked, so it runs longer than
+  // the shortest path this estimate is based on.
+  const backEst = (n) => (loop && isFinite(home[n]) ? Math.max(0, home[n] - endRadiusM) * LOOP_RETURN_SLACK : 0);
   let cur = startNode, len = 0, reward = 0, parkLen = 0;   // parkLen: metres already walked inside parks
   const path = [startNode], edges = [];
   for (let step = 0; step < MAX_STEPS; step++) {
-    const { dist, pN, pE } = dijkstra(adj, N, cur);
+    const { dist, tlen, pN, pE } = dijkstra(adj, N, cur, cost);
+    const outbound = len < 0.5 * budgetM;   // first half → drift away, second half → drift home
     // Spend up to ~half the walk inside parks (parkCapM), then stop treating park
     // edges as prizes so the route heads back to the vibe streets for the rest.
     const parkActive = parkLen < parkCapM;
@@ -651,20 +758,28 @@ function planWalk(net, idx, weights, startNode, budgetM, opt) {
       if (r < minReward && !isPark) continue;      // minimum-criteria gate — park edges always qualify
       const e = net.edges[ei], u = e[0], v = e[1], el = e[2];
       const dNear = Math.min(dist[u], dist[v]);
-      if (!isFinite(dNear) || len + dNear + el > budgetM) continue;
-      const near = dist[u] <= dist[v] ? u : v;
+      if (!isFinite(dNear)) continue;
+      const near = dist[u] <= dist[v] ? u : v, far = near === u ? v : u;
+      // budget in TRUE metres — go there, walk it, and still afford the way home.
+      const tNear = tlen[near];
+      if (len + tNear + el + backEst(far) > budgetM) continue;
       // gain: reward per detour, with proximity emphasised by detourExp; streets we
       // want to avoid (diversity) are pushed down but not forbidden.
       let gain = (r + 0.001) / Math.pow(dNear + el + 1, detourExp);
       if (avoidNames && avoidNames.has(net.names[nid])) gain *= avoidPenalty;
-      cands.push({ ei, near, far: near === u ? v : u, el, r, gain, dNear });
+      // loop shaping: nudge towards prizes that lead away from the start early on and
+      // back towards it later, so the walk sweeps a circuit rather than a there-and-back.
+      if (loop && isFinite(home[far]) && isFinite(home[cur]))
+        gain *= 1 + LOOP_SHAPE * Math.tanh((home[far] - home[cur]) / 400) * (outbound ? 1 : -1);
+      cands.push({ ei, near, far, el, r, gain, dNear, tNear });
     }
     if (!cands.length) break;
     cands.sort((a, b) => b.gain - a.gain);
     const pick = cands[Math.floor(Math.random() * Math.min(RCL, cands.length))];
     // once we already have a walk of at least the minimum length, don't detour far
-    // for the next spot — a good nearby walk is enough (target ~25–38 min).
-    if (len >= minBudgetM && pick.dNear > farM) break;
+    // for the next spot — a good nearby walk is enough (target ~25–38 min). The way
+    // home counts towards that floor, since the user will walk it too.
+    if (len + backEst(cur) >= minBudgetM && pick.tNear > farM) break;
     // walk the shortest path cur → near (collecting any fresh reward passed)
     const seg = [];
     for (let n = pick.near; n !== cur && n !== -1; n = pN[n]) seg.push({ node: n, ei: pE[n] });
@@ -678,7 +793,45 @@ function planWalk(net, idx, weights, startNode, budgetM, opt) {
     len += pick.el; path.push(pick.far); edges.push(pick.ei);
     cur = pick.far;
   }
-  return path.length > 1 ? { path, edges, len, reward } : null;
+  // ---- closing leg: come back to a practical meeting point ----------------------
+  // Any node within endRadiusM of the start will do, so we can pick the way home that
+  // repeats the least of what was already walked (LOOP_FRESH_W) while still landing
+  // the walk above its minimum length. Shortest is NOT the goal — freshest is.
+  if (loop && cur !== startNode) {
+    const { dist, tlen, pN, pE } = dijkstra(adj, N, cur, cost);
+    let bestSeg = null, bestNode = -1, bestScore = Infinity;
+    let anySeg = null, anyNode = -1, anyLen = Infinity;   // fallback: just get home
+    for (let n = 0; n < N; n++) {
+      if (!isFinite(home[n]) || home[n] > endRadiusM) continue;   // not a meeting point
+      if (!isFinite(dist[n])) continue;                          // unreachable from here
+      // rebuild the way back so we can measure how much of it repeats the walk
+      const seg = []; let reused = 0;
+      for (let k = n; k !== cur && k !== -1; k = pN[k]) {
+        const ei = pE[k]; if (ei < 0) break;
+        seg.push({ node: k, ei });
+        if (used.has(ei)) reused += net.edges[ei][2];
+      }
+      seg.reverse();
+      const total = len + tlen[n];
+      if (total < anyLen) { anyLen = total; anySeg = seg; anyNode = n; }
+      if (total > budgetM * LOOP_OVERSHOOT) continue;             // would blow the time budget
+      const score = reused * LOOP_FRESH_W + Math.max(0, minBudgetM - total);
+      if (score < bestScore) { bestScore = score; bestSeg = seg; bestNode = n; }
+    }
+    // nothing fits the budget → take the shortest way home anyway; arriving a little
+    // late beats leaving the participant stranded across the neighbourhood.
+    if (!bestSeg) { bestSeg = anySeg; bestNode = anyNode; }
+    if (bestSeg && bestSeg.length) {
+      for (const s of bestSeg) {
+        if (!used.has(s.ei)) { used.add(s.ei); reward += edgeReward(s.ei); if (isParkEdge(s.ei)) parkLen += net.edges[s.ei][2]; }
+        len += net.edges[s.ei][2]; path.push(s.node); edges.push(s.ei);
+      }
+      cur = bestNode;
+    }
+  }
+  // gapM = how far the finish still is from the start, on foot. Null for an open walk.
+  const gapM = loop && home && isFinite(home[cur]) ? home[cur] : null;
+  return path.length > 1 ? { path, edges, len, reward, gapM } : null;
 }
 
 // walk-net edge names can be a Python list-repr — OSMnx stores a dual-named edge as
@@ -824,7 +977,7 @@ function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds, pa
       if (density > bestDensity) { bestDensity = density; best = plan; }
     }
     if (!best) continue;
-    const { line, routeFC, sequence, legs, endPoint } = describeWalk(net, best, isVibe);
+    const { line, routeFC, sequence, legs, startPoint, endPoint } = describeWalk(net, best, isVibe);
     const streets = [...new Set(legs.map(l => l.name))];
     const key = streets.join('>');
     if (seenKeys.has(key)) continue;            // skip a duplicate route
@@ -837,10 +990,21 @@ function makeWalkOptions(net, idx, weights, startNode, budgetM, displayedIds, pa
     const marquee = yours.length
       ? yours.map(n => ({ n, r: rewardOf(idx.nameToId.get(n)) })).sort((a, b) => b.r - a.r)[0].n
       : (legs.length ? legs.slice().sort((a, b) => b.m - a.m)[0].name : null);
-    out.push({ label: st.label, line, routeFC, sequence, legs, streets, yours, isVibe, where, areas, marquee, endPoint,
-      len: best.len, reward: best.reward, min: Math.round(best.len / WALK_SPEED_M_MIN) });
+    out.push({ label: st.label, line, routeFC, sequence, legs, streets, yours, isVibe, where, areas, marquee, startPoint, endPoint,
+      gapM: best.gapM, len: best.len, reward: best.reward, min: Math.round(best.len / WALK_SPEED_M_MIN) });
   }
   return out;
+}
+
+// How a soft-loop walk ends, in words. The participant needs to know BEFORE setting
+// off that they will not have to find their own way back — and roughly where the
+// finish sits relative to the start, since that is where the group meets again.
+// Returns null for an open walk (gapM null), so callers can just skip the line.
+function loopBackText(gapM) {
+  if (gapM == null) return null;
+  if (gapM < 80) return 'ends back where you started';
+  const m = Math.round(gapM / 10) * 10;
+  return `ends ${m} m from your start · ~${Math.max(1, Math.round(gapM / WALK_SPEED_M_MIN))} min away`;
 }
 
 // PRESET vibe chips — named shortcuts that pin the vibe axes to a fixed target,
@@ -1454,7 +1618,8 @@ function RouteSequence({ stats, seq, onPan }) {
         <span><i style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 6, width: 22, height: 0, borderTop: '2px dashed #9db0ac' }} />link</span>
       </div>
 
-      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', margin: '2px 0 10px' }}>Start → … → finish</div>
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--ink-faint)', margin: '2px 0 10px' }}>
+        {stats.gapM != null ? 'Start → … → back near start' : 'Start → … → finish'}</div>
 
       {/* timeline */}
       <div>
@@ -1505,12 +1670,15 @@ function RouteSequence({ stats, seq, onPan }) {
           );
         })}
 
-        {/* finish — a ◆ diamond, the open walk ends here */}
+        {/* finish — a ◆ diamond. The walk is a soft loop: it lands back near the
+            start (never on the same streets), so say how far that is. */}
         <div style={{ display: 'flex', gap: 12 }}>
           {rail(<div style={{ width: 13, height: 13, background: 'var(--accent)', border: '2.5px solid var(--accent)', transform: 'rotate(45deg)', marginTop: 3 }} />, null)}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--ink)' }}>Finish</div>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-faint)', marginTop: 2 }}>{stats.where || 'end of your walk'}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-faint)', marginTop: 2 }}>
+              {loopBackText(stats.gapM) || stats.where || 'end of your walk'}
+            </div>
           </div>
         </div>
       </div>
@@ -1536,6 +1704,60 @@ function GpsBadge({ status }) {
       boxShadow: 'var(--shadow)' }}>
       <span style={{ width: 7, height: 7, borderRadius: 999, background: L[0], flex: '0 0 auto' }} />{L[1]}
     </span>
+  );
+}
+
+// Demo-start control, sitting next to the GPS badge. Three states, because during a
+// study session it must be impossible to mistake a hand-placed departure for a real
+// position: idle (offer), placing (waiting for the tap, cancellable), and placed —
+// which shows a loud badge plus the two things you then want: move it, or go back
+// to the GPS.
+function DemoStartControl({ placing, placed, onPlace, onCancel, onReset }) {
+  const pill = (bg, color, border) => ({
+    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+    color, background: bg, border: border || '1px solid transparent', borderRadius: 999,
+    padding: '5px 10px', cursor: 'pointer', boxShadow: 'var(--shadow)',
+  });
+  if (placing) return (
+    <button onClick={onCancel} style={pill('var(--accent)', '#fff')}>◎ Tap the map · cancel</button>
+  );
+  if (placed) return (
+    <React.Fragment>
+      <span style={{ ...pill('#E0A11B', '#fff'), cursor: 'default' }}>📍 Demo start</span>
+      <button onClick={onPlace} style={pill('var(--card)', 'var(--ink-soft)')}>Move</button>
+      <button onClick={onReset} style={pill('var(--card)', 'var(--ink-soft)')}>↺ GPS</button>
+    </React.Fragment>
+  );
+  return <button onClick={onPlace} style={pill('var(--card)', 'var(--ink-soft)')}>📍 Set start</button>;
+}
+
+// Way out of a shared walk, sitting in the same badge row as the GPS pill — the one
+// strip that stays visible whatever the sheet is showing, so it is reachable even
+// while following someone else's route (which is exactly when you're most stuck).
+// Confirms in place rather than with a dialog: the host's tap ends the walk for
+// EVERYONE, and that must not happen on a mis-tap while walking.
+function WalkExitControl({ host, onLeave }) {
+  const [confirming, setConfirming] = React.useState(false);
+  const pill = (bg, color) => ({
+    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+    color, background: bg, border: '1px solid transparent', borderRadius: 999,
+    padding: '5px 10px', cursor: 'pointer', boxShadow: 'var(--shadow)',
+  });
+  if (!confirming) return (
+    <button onClick={() => setConfirming(true)} style={pill('var(--card)', 'var(--ink-soft)')}>
+      ⇥ {host ? 'End walk' : 'Leave walk'}
+    </button>
+  );
+  return (
+    <React.Fragment>
+      <span style={{ ...pill('var(--card)', 'var(--ink-soft)'), cursor: 'default' }}>
+        {host ? 'End for everyone?' : 'Leave the walk?'}
+      </span>
+      <button onClick={() => { setConfirming(false); onLeave(); }} style={pill('#C0392B', '#fff')}>
+        {host ? 'End' : 'Leave'}
+      </button>
+      <button onClick={() => setConfirming(false)} style={pill('var(--card)', 'var(--ink-soft)')}>Cancel</button>
+    </React.Fragment>
   );
 }
 
@@ -1578,6 +1800,15 @@ function RealMapScreen({ go }) {
   // GPS state in React: the accuracy changes on every fix and lives in the marker
   // popup (plain DOM) instead, so a 1 Hz GPS stream can't re-render this screen.
   const [gpsStatus, setGpsStatus] = React.useState('pending');
+  // DEMO START — a departure point placed by hand on the map, which overrides both the
+  // real fix and FAKE_GPS. Needed to try walks from anywhere in Jongno (and to rehearse
+  // the study from a desk), since the fallback start is a single fixed node in 인사동.
+  // Both are mirrored into refs: the map's click handler and the puck renderer are
+  // registered once at load time, so their closures would never see the state updates.
+  const [demoStart, setDemoStart] = React.useState(readDemoStart);   // [lng,lat] on a graph node | null
+  const [placing, setPlacing] = React.useState(false);               // waiting for a tap on the map
+  const demoStartRef = React.useRef(demoStart);
+  const placingRef = React.useRef(false);
   const [tab, setTab] = React.useState('search');     // bottom nav: 'search' | 'locals'
   const [query, setQuery] = React.useState('');
   const [kind, setKind] = React.useState(null);       // 'vibe' | 'function:<id>' | 'place'
@@ -1697,6 +1928,13 @@ function RealMapScreen({ go }) {
       //     open walk reads DIRECTIONALLY (start = light, finish = deep).
       //   · connectors     → thin, faded, dashed — the parts that just link.
       // A white halo under both lifts the whole route off the map.
+      // Meeting zone — the walk is a soft LOOP: it finishes anywhere inside this ring
+      // around the start, not on the exact departure spot. Drawing it makes the promise
+      // legible ("you come back around here"), and it is where the study's questionnaire
+      // and second session happen. Added before the route so it sits underneath.
+      map.addSource('meet-zone', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({ id: 'meet-zone-ring', type: 'line', source: 'meet-zone',
+        paint: { 'line-color': MAP_PAL.accent, 'line-opacity': 0.5, 'line-width': 1.6, 'line-dasharray': [2, 2.4] } });
       map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addLayer({ id: 'route-halo', type: 'line', source: 'route',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -1763,13 +2001,17 @@ function RealMapScreen({ go }) {
         paint: { 'line-color': MAP_PAL.heatCore, 'line-opacity': 0,
           'line-width': ['interpolate', ['linear'], ['zoom'], 13, 10, 16, 16, 19, 22] } });
 
-      map.on('click', 'cand-line', e => selectResultByName(e.features[0].properties.name));
-      map.on('mouseenter', 'cand-line', () => { map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'cand-line', () => { map.getCanvas().style.cursor = ''; });
+      // While the tester is placing a demo start, EVERY tap means "start here" — a
+      // street tap must not open a street card instead (layer handlers run first).
+      map.on('click', 'cand-line', e => { if (placingRef.current) return; selectResultByName(e.features[0].properties.name); });
+      map.on('mouseenter', 'cand-line', () => { if (!placingRef.current) map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'cand-line', () => { if (!placingRef.current) map.getCanvas().style.cursor = ''; });
       // nature walks are clickable too
-      map.on('click', 'green-cand-line', e => { const n = e.features[0].properties.name; if (n) selectResultByName(n); });
-      map.on('mouseenter', 'green-cand-line', () => { map.getCanvas().style.cursor = 'pointer'; });
-      map.on('mouseleave', 'green-cand-line', () => { map.getCanvas().style.cursor = ''; });
+      map.on('click', 'green-cand-line', e => { if (placingRef.current) return; const n = e.features[0].properties.name; if (n) selectResultByName(n); });
+      map.on('mouseenter', 'green-cand-line', () => { if (!placingRef.current) map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'green-cand-line', () => { if (!placingRef.current) map.getCanvas().style.cursor = ''; });
+      // demo mode: a tap anywhere on the map becomes the walk's departure point
+      map.on('click', e => { if (placingRef.current) placeDemoStart(e.lngLat.lng, e.lngLat.lat); });
 
       // "You are here" puck — created here (not with the routing graph) so it shows
       // up as soon as the map is ready and the geolocation watch has something to
@@ -1915,18 +2157,29 @@ function RealMapScreen({ go }) {
   function renderPuck() {
     const map = mapRef.current, puck = puckRef.current, pop = puckPopupRef.current;
     if (!map || !puck) return;
-    const st = gpsStatusRef.current, fix = gpsRef.current;
-    const live = st === 'live' && fix;
-    puck.setLngLat(live ? [fix.lng, fix.lat] : FAKE_GPS);
+    const st = gpsStatusRef.current, fix = gpsRef.current, demo = demoStartRef.current;
+    // a hand-placed start outranks everything, including a live fix — that is the
+    // whole point of the demo mode, and the badge says so out loud.
+    const live = !demo && st === 'live' && fix;
+    puck.setLngLat(demo || (live ? [fix.lng, fix.lat] : FAKE_GPS));
+    // amber puck while a demo start is in force, matching its badge — on a phone in
+    // the field, the marker itself must say "this is not your real position".
+    const pel = puck.getElement();
+    if (pel) {
+      const c = demo ? '#E0A11B' : MAP_PAL.accent;
+      pel.style.background = c;
+      pel.style.boxShadow = '0 0 0 6px ' + c + '33, 0 2px 6px rgba(0,0,0,.4)';
+    }
     if (pop) {
       pop.setHTML(
-        live ? '<b>You are here</b><br>live GPS · ±' + Math.round(fix.acc || 0) + ' m'
+        demo ? '<b>Demo start</b><br>Placed by hand — walks depart from here, whatever the GPS says.'
+        : live ? '<b>You are here</b><br>live GPS · ±' + Math.round(fix.acc || 0) + ' m'
         : st === 'outside' ? '<b>You are outside the study zone</b><br>A demo marker has been placed in Jongno for now, so you can keep using the app.'
         : st === 'off' ? '<b>Demo start</b><br>No GPS (permission refused or no signal) — using the fixed Jongno start.'
         : '<b>Demo start</b><br>Waiting for a GPS fix…'
       );
     }
-    if (!live && (st === 'outside' || st === 'off') && !demoNoticeRef.current) {
+    if (!demo && !live && (st === 'outside' || st === 'off') && !demoNoticeRef.current) {
       demoNoticeRef.current = true;
       if (pop && !pop.isOpen()) puck.togglePopup();
     }
@@ -1942,9 +2195,66 @@ function RealMapScreen({ go }) {
   function syncStartNode() {
     const net = netRef.current;
     if (!net) return;
-    const fix = gpsRef.current;
-    const p = (fix && gpsStatusRef.current === 'live') ? [fix.lng, fix.lat] : FAKE_GPS;
+    const fix = gpsRef.current, demo = demoStartRef.current;
+    const p = demo || ((fix && gpsStatusRef.current === 'live') ? [fix.lng, fix.lat] : FAKE_GPS);
     startNodeRef.current = nearestNode(net, p[0], p[1]);
+  }
+
+  /* ---- demo mode: place the departure point by hand ------------------------
+     The fallback start is one fixed node in 인사동, so without this the whole app
+     can only ever be tried from that corner. Tapping the map picks a departure
+     ANYWHERE in the pilot zone — for rehearsing the study, for testing a walk from
+     a participant's real meeting point, or for checking a neighbourhood far from
+     the fixed node. The chosen point is snapped to the nearest node of the walk
+     network: the router departs from a node, so showing the raw tap would put the
+     puck somewhere the walk never actually starts. */
+  function startPlacing() {
+    if (!netRef.current) { setStatus('Walk network still loading…'); return; }
+    placingRef.current = true; setPlacing(true);
+    const map = mapRef.current; if (map) map.getCanvas().style.cursor = 'crosshair';
+    setStatus('Tap the map to place your start.');
+  }
+  function cancelPlacing() {
+    placingRef.current = false; setPlacing(false);
+    const map = mapRef.current; if (map) map.getCanvas().style.cursor = '';
+    setStatus('');
+  }
+  // Commit a tapped position as the new departure. Refuses a point outside the pilot
+  // bbox: there is no network there, so nearestNode would silently snap to whatever
+  // border node happens to be closest and every walk would depart from the wrong place.
+  function placeDemoStart(lng, lat) {
+    const net = netRef.current, idx = routeIdxRef.current; if (!net || !idx) return;
+    // Both refusals keep placing mode ON, so the tester just taps somewhere else.
+    if (!inJongno(lng, lat)) { setStatus('Outside the study zone — pick a spot inside Jongno.'); return; }
+    const node = nearestNode(net, lng, lat);
+    if (!canWalkFrom(net, idx, node, WALK_MIN_BUDGET_M)) {
+      setStatus('That spot is cut off from the walk network — try nearer a street.'); return;
+    }
+    const p = net.nodes[node].slice();
+    demoStartRef.current = p; setDemoStart(p); writeDemoStart(p);
+    startNodeRef.current = node;
+    cancelPlacing();
+    clearWalkForNewStart('Start placed. Propose a walk from here.');
+  }
+  // Back to the real position (or to FAKE_GPS when there's no usable fix).
+  function clearDemoStart() {
+    demoStartRef.current = null; setDemoStart(null); writeDemoStart(null);
+    syncStartNode();
+    cancelPlacing();
+    clearWalkForNewStart('Back to your GPS position.');
+  }
+  // A drawn walk belongs to the start it was computed from, so moving the start makes
+  // it a lie — drop it (and the loop's meeting ring) rather than leave a stale route.
+  // Called from the map's click handler, whose closure is the FIRST render's — so it
+  // must not read React state (it would be stale). Everything here goes through refs
+  // and setters, and the view is cleared unconditionally rather than by inspecting
+  // `kind`: after the start moves, the highlights are gone and no view applies anyway.
+  function clearWalkForNewStart(msg) {
+    resetWalk(); clearHighlights(); setKind(null); setResults([]); setSelected(null);
+    renderPuck();
+    const map = mapRef.current;
+    if (map && demoStartRef.current) map.easeTo({ center: demoStartRef.current, zoom: Math.max(map.getZoom(), 15.2), duration: 500 });
+    setStatus(msg);
   }
 
   const EMPTY_FC = { type: 'FeatureCollection', features: [] };
@@ -1954,7 +2264,7 @@ function RealMapScreen({ go }) {
   function clearHighlights() {
     const map = mapRef.current;
     if (!map) return;
-    ['candidates', 'candidates-heat', 'green-cand', 'route', 'dong-region'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
+    ['candidates', 'candidates-heat', 'green-cand', 'route', 'meet-zone', 'dong-region'].forEach(s => { if (map.getSource(s)) map.getSource(s).setData(EMPTY_FC); });
     clearNatureBubbles();
     clearRouteMarkers();
   }
@@ -2115,15 +2425,18 @@ function RealMapScreen({ go }) {
   }
 
   // ROUTE highlight: draw the walk as tagged SEGMENTS (vibe vs connector, coloured
-  // directionally), drop a ◆ finish marker (the open walk ends away from the ● start)
-  // and landmark anchor pins for the areas it passes, then fit the view to it.
+  // directionally), ring the meeting zone around the start, drop a ◆ finish marker
+  // inside it, plus landmark anchor pins, then fit the view to it.
   function drawRoute(opt) {
     const map = mapRef.current;
     if (!map || !map.getSource('route')) return;
     clearHighlights();
     map.getSource('route').setData(opt.routeFC || { type: 'FeatureCollection', features: [opt.line] });
-    // ◆ finish pin — a diamond, distinct from the round ● "you are here" start, so
-    // the user reads that an OPEN walk ends somewhere else (not back at the start).
+    // the meeting zone the loop lands in — only for a closed walk (gapM set)
+    if (map.getSource('meet-zone') && opt.gapM != null && opt.startPoint)
+      map.getSource('meet-zone').setData({ type: 'FeatureCollection', features: [circleAround(opt.startPoint, LOOP_END_RADIUS_M)] });
+    // ◆ finish pin — a diamond, distinct from the round ● "you are here" start,
+    // because the loop lands NEAR the start rather than exactly on it.
     if (opt.endPoint) {
       const el = document.createElement('div');
       el.style.cssText = 'width:15px;height:15px;background:' + MAP_PAL.accent +
@@ -2133,7 +2446,8 @@ function RealMapScreen({ go }) {
       wrap.appendChild(el);
       endMarkerRef.current = new maplibregl.Marker({ element: wrap })
         .setLngLat(opt.endPoint)
-        .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML('<b>Finish</b><br>' + (opt.where || 'end of your walk')))
+        .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML(
+          '<b>Finish</b><br>' + (loopBackText(opt.gapM) || opt.where || 'end of your walk')))
         .addTo(map);
     }
     // landmark anchors — a small ink dot + label for each area the walk runs near.
@@ -2146,7 +2460,9 @@ function RealMapScreen({ go }) {
         '<span style="font-family:' + t.fontUI + ';font-weight:800;font-size:10.5px;color:' + MAP_PAL.ink + ';white-space:nowrap;text-shadow:0 0 3px #fff,0 0 3px #fff;">' + name + '</span>';
       anchorMarkersRef.current.push(new maplibregl.Marker({ element: el, anchor: 'left' }).setLngLat(L.pts[0]).addTo(map));
     });
-    fitTo([opt.line]);
+    // frame the ring too, so the "you come back here" zone is never cropped off
+    fitTo(opt.gapM != null && opt.startPoint
+      ? [opt.line, circleAround(opt.startPoint, LOOP_END_RADIUS_M)] : [opt.line]);
   }
 
   // reset the walk state when a search is NOT a vibe/preset street list.
@@ -2208,7 +2524,7 @@ function RealMapScreen({ go }) {
       en: amb ? amb.en : '', ko: amb ? amb.ko : '',
     } : null;
     setKind('route'); setTitle(opt.label);
-    setRouteStats({ m: opt.len, min: opt.min, where: opt.where, yours: (opt.yours || []).length, marquee });
+    setRouteStats({ m: opt.len, min: opt.min, where: opt.where, gapM: opt.gapM, yours: (opt.yours || []).length, marquee });
     // enrich each named leg with its LLM ambiance sentence (the Local-favorite text),
     // so the step card can describe the street, not just name it.
     const seq = (opt.sequence || []).map(s => {
@@ -2245,7 +2561,10 @@ function RealMapScreen({ go }) {
       geojson: opt.line && opt.line.geometry,
       length_m: opt.len,
       est_min: opt.len ? Math.round(opt.len / WALK_SPEED_M_MIN) : null,
-      params: { option_index: i, where: opt.where, areas: opt.areas, leader: !!(group && iAmLeader()) },
+      // gap_m = metres between finish and start: for a soft loop this is the number
+      // that says whether the participant really did come back to the meeting point.
+      params: { option_index: i, where: opt.where, areas: opt.areas, leader: !!(group && iAmLeader()),
+        loop: opt.gapM != null, gap_m: opt.gapM != null ? Math.round(opt.gapM) : null },
     }).then(rid => { if (rid) S.logRouteChoice(rid); });
   }
   // Back to the vibe street list from the options / a drawn route.
@@ -2305,6 +2624,40 @@ function RealMapScreen({ go }) {
     const m = w && (w.members || []).find(x => x.participant_id === pid);
     return (m && m.display_name) || 'the leader';
   }
+  // ---- leaving a shared walk ------------------------------------------------------
+  // Until now, joining a walk was one-way: once accepted, no screen offered a way out,
+  // so a participant following someone else's route was stuck with it for the session.
+  // The server already knew how — it just had nothing calling it. Two different acts,
+  // because the server only lets the HOST close a walk:
+  //   · host  → status 'ended', the walk is over for everybody;
+  //   · guest → answer 'declined', I drop out and the others carry on.
+  // Both then REFRESH rather than trust the reply: answer/status hand back the walk as
+  // it now stands (with the others still accepted), and publishing that would leave this
+  // phone looking like it were still on the walk until the next poll, 2.5 s later.
+  // /walks/current filters out declined memberships and ended walks, so one round-trip
+  // returns the truth — null — and the group state falls away at once.
+  async function leaveSharedWalk() {
+    const S = window.StudyAPI || {};
+    const host = iAmLeader();
+    const wid = S.currentWalkId ? S.currentWalkId() : null;
+    try {
+      if (host) { if (S.setWalkStatus) await S.setWalkStatus('ended'); }
+      else if (S.answerWalk) await S.answerWalk(false);
+      if (S.refreshWalk) await S.refreshWalk();
+    } catch (e) { /* offline: the local clear below still gets the walker out */ }
+    if (S.logEvent) S.logEvent(host ? 'walk_ended_by_host' : 'walk_left', { walk_id: wid });
+    // …and the local "who's coming" toggles, or the group would immediately re-form
+    // from them (see clearJoiningFriends). Said out loud in the status: those toggles
+    // are a setting the walker set themselves, so clearing them can't be silent.
+    const hadToggles = clearJoiningFriends();
+    // Everything the walk was driving on this screen: the group ranking, the route the
+    // leader picked, and the banner naming them.
+    setGroup(null); setRouteFrom(null);
+    resetWalk(); clearHighlights(); setKind(null); setResults([]); setSelected(null);
+    setStatus((host ? 'Walk ended.' : 'You left the walk.') + ' Exploring on your own'
+      + (hadToggles ? ' — your “who’s coming” picks were cleared too.' : ' again.'));
+  }
+
   // Draw a route somebody else picked, exactly as they see it.
   function followSharedRoute(entry) {
     if (!entry || !entry.route) return false;
@@ -2669,6 +3022,9 @@ function RealMapScreen({ go }) {
               onClose={() => { setShowSliders(false); setSheetOpen(true); }} />)}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           <GpsBadge status={gpsStatus} />
+          <DemoStartControl placing={placing} placed={!!demoStart}
+            onPlace={startPlacing} onCancel={cancelPlacing} onReset={clearDemoStart} />
+          {group && <WalkExitControl host={iAmLeader()} onLeave={leaveSharedWalk} />}
           {status && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)',
             background: 'var(--card)', borderRadius: t.radiusSm, padding: '5px 10px', boxShadow: 'var(--shadow)' }}>{status}</div>}
         </div>
@@ -2770,6 +3126,13 @@ function RealMapScreen({ go }) {
                       <span style={{ display: 'block', fontSize: 11.5, color: 'var(--ink-soft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {(o.len / 1000).toFixed(1)} km · {o.where}
                       </span>
+                      {/* the loop promise, stated on the card: you come back near here */}
+                      {loopBackText(o.gapM) && (
+                        <span style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color: 'var(--ink-faint)', marginTop: 2,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          ↩ {loopBackText(o.gapM)}
+                        </span>
+                      )}
                     </span>
                     <span style={{ fontSize: 15, color: 'var(--ink-faint)' }}>→</span>
                   </button>
