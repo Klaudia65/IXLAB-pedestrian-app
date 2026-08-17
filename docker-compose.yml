@@ -35,6 +35,9 @@ services:
       # shared key the app must send (X-Study-Key) to write study data.
       # dev value; change it to a real secret before deploying publicly.
       STUDY_WRITE_KEY: "dev-study-key-change-me"
+      # read/export key (X-Export-Key). Locally DEBUG=true already allows exports
+      # without it; set it here to exercise the production behaviour.
+      STUDY_EXPORT_KEY: "dev-export-key-change-me"
     ports:
       - "8000:8000"
     depends_on:

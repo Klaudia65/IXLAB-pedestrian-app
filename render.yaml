@@ -26,5 +26,7 @@ services:
           property: connectionString    # 'postgres://...' — normalized to asyncpg in config.py
       - key: STUDY_WRITE_KEY
         sync: false                     # set the REAL secret in the Render dashboard
+      - key: STUDY_EXPORT_KEY
+        sync: false                     # read/export key — set in the dashboard, NEVER in the frontend
       - key: DEBUG
         value: "false"
