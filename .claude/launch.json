@@ -12,6 +12,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["web/frontend/serve.py", "8757"],
       "port": 8757
+    },
+    {
+      "name": "web-tools",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8760", "--bind", "127.0.0.1", "--directory", "web"],
+      "port": 8760
     }
   ]
 }

@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GPS trace viewer — study sessions</title>
+
+<!-- Local-first by design: the file you drop is read with FileReader and never
+     uploaded anywhere. Only the basemap tiles come from the network (same source
+     as the app itself), so a participant's trace stays on this machine. -->
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root {
+    --ink: #17202b; --ink2: #5b6875; --line: #dfe4ea;
+    --card: #ffffff; --bg: #f4f6f8; --accent: #2f6df6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+  body { display: flex; background: var(--bg); }
+
+  #side { width: 320px; flex: 0 0 320px; height: 100%; overflow-y: auto;
+          background: var(--card); border-right: 1px solid var(--line); padding: 16px; }
+  #map { flex: 1; height: 100%; }
+
+  h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--ink2); font-size: 11.5px; margin: 0 0 14px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+       color: var(--ink2); margin: 18px 0 8px; font-weight: 600; }
+
+  #drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 18px 12px;
+          text-align: center; color: var(--ink2); cursor: pointer; transition: 0.15s; }
+  #drop:hover, #drop.over { border-color: var(--accent); background: #f5f8ff; color: var(--ink); }
+  #drop b { color: var(--ink); }
+  #file { display: none; }
+
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row label { flex: 1; cursor: pointer; }
+  .swatch { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 11px; }
+  .muted { color: var(--ink2); font-size: 11px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  th, td { text-align: right; padding: 4px 3px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--ink2); font-weight: 600; }
+
+  select, input[type=range] { width: 100%; }
+  select { padding: 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); }
+  .legend { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--ink2); }
+  .ramp { height: 8px; flex: 1; border-radius: 4px; }
+  #err { color: #b3261e; font-size: 11.5px; margin-top: 10px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<div id="side">
+  <h1>GPS trace viewer</h1>
+  <p class="sub">Drop a study export to inspect the walked route. Nothing is uploaded.</p>
+
+  <div id="drop">
+    <b>Drop gps_points.csv</b><br />or .geojson — or click to choose
+  </div>
+  <input type="file" id="file" accept=".csv,.geojson,.json" multiple />
+  <div id="err"></div>
+  <p class="muted" id="offline" hidden>Basemap tiles unavailable (offline or blocked) —
+    the trace below is still exact, it just has no streets under it.</p>
+
+  <div id="controls" hidden>
+    <h2>Sessions</h2>
+    <div id="sessions"></div>
+
+    <h2>Colour points by</h2>
+    <select id="mode">
+      <option value="time">Time — start to finish</option>
+      <option value="session">One colour per session</option>
+      <option value="acc">GPS accuracy</option>
+    </select>
+    <div class="legend"><span id="rampLo">start</span><div class="ramp" id="ramp"></div><span id="rampHi">end</span></div>
+
+    <h2>Hide fixes worse than <span id="accVal">no limit</span></h2>
+    <input type="range" id="acc" min="5" max="105" step="5" value="105" />
+    <p class="muted">Poor fixes are kept in the database on purpose — filter them here
+      to see how much of the trace is trustworthy.</p>
+
+    <h2>Per session</h2>
+    <table id="stats"></table>
+    <p class="muted" id="note"></p>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+/* ============================================================
+   Basemap — the same vector tiles and palette as the app's map,
+   so a trace looks like it does in the prototype.
+   ============================================================ */
+const PAL = { land: '#f2f1ec', land2: '#e3e0d8', card: '#ffffff', park: '#d8e8d0', water: '#cfe0ea' };
+
+/* The map starts with NO remote source: an empty style resolves offline and
+   instantly, so a trace is always drawn even if the tile server is unreachable
+   or blocked by the network. The vector basemap is added afterwards, underneath
+   the trace, as an enhancement that is allowed to fail. `glyphs` can stay here —
+   fonts are only fetched when a symbol layer actually needs them. */
+function baseStyle() {
+  return {
+    version: 8,
+    glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+    sources: {},
+    layers: [{ id: 'bg', type: 'background', paint: { 'background-color': PAL.land } }],
+  };
+}
+
+function basemapLayers() {
+  return [
+      { id: 'green', type: 'fill', source: 'omt', 'source-layer': 'landcover',
+        filter: ['in', 'class', 'wood', 'grass', 'scrub', 'park'],
+        paint: { 'fill-color': PAL.park, 'fill-opacity': 0.5 } },
+      { id: 'park', type: 'fill', source: 'omt', 'source-layer': 'park',
+        paint: { 'fill-color': PAL.park, 'fill-opacity': 0.4 } },
+      { id: 'water', type: 'fill', source: 'omt', 'source-layer': 'water',
+        paint: { 'fill-color': PAL.water, 'fill-opacity': 0.6 } },
+      { id: 'building', type: 'fill', source: 'omt', 'source-layer': 'building', minzoom: 13,
+        paint: { 'fill-color': '#e9e7e0', 'fill-outline-color': PAL.land2, 'fill-opacity': 0.85 } },
+      { id: 'road-case', type: 'line', source: 'omt', 'source-layer': 'transportation',
+        filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': PAL.land2, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 16, 9, 18, 20] } },
+      { id: 'road', type: 'line', source: 'omt', 'source-layer': 'transportation',
+        filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': PAL.card, 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.6, 16, 6, 18, 14] } },
+      { id: 'label', type: 'symbol', source: 'omt', 'source-layer': 'transportation_name', minzoom: 14,
+        layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 11,
+                  'symbol-placement': 'line' },
+        paint: { 'text-color': '#8b96a1', 'text-halo-color': '#ffffff', 'text-halo-width': 1.2 } },
+  ];
+}
+
+/** Add the vector basemap below the trace. Failures are non-fatal by design. */
+function addBasemap() {
+  if (map.getSource('omt')) return;
+  try {
+    map.addSource('omt', { type: 'vector', url: 'https://tiles.openfreemap.org/planet' });
+    // beforeId keeps the walked route on top of streets and buildings.
+    const before = map.getLayer('trace-line') ? 'trace-line' : undefined;
+    for (const l of basemapLayers()) map.addLayer(l, before);
+  } catch (e) {
+    console.warn('basemap unavailable, showing the trace on a plain background', e);
+  }
+}
+
+const map = new maplibregl.Map({
+  container: 'map', style: baseStyle(),
+  center: [126.985, 37.573], zoom: 13, attributionControl: { compact: true },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }));
+
+/* ============================================================
+   PARSING — accepts what the export endpoints produce:
+   gps_points.csv, gps_points.geojson, gps_tracks.geojson.
+   Track lines are recomputed from the points when points are
+   present, so one file is enough.
+   ============================================================ */
+const SESSION_HUES = ['#2f6df6', '#e0603a', '#1f9d6b', '#8b5cf6', '#d4a017', '#0e8ba8', '#c2185b'];
+
+/** Split one CSV line, honouring "quoted, fields" and "" escapes. */
+function splitCsvLine(line) {
+  const out = []; let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+function num(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
+
+function parseCsv(text) {
+  // utf-8-sig: the export writes a BOM so Excel reads Korean correctly.
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  if (!lines.length) return [];
+  const head = splitCsvLine(lines[0]).map(h => h.trim());
+  const idx = name => head.indexOf(name);
+  const iLat = idx('lat'), iLon = idx('lon');
+  if (iLat < 0 || iLon < 0) throw new Error('CSV has no lat/lon columns — is this the GPS export?');
+  const iSid = idx('session_id'), iWho = idx('participant'), iTs = idx('ts'),
+        iAcc = idx('accuracy_m'), iSpd = idx('speed');
+  return lines.slice(1).map(l => {
+    const c = splitCsvLine(l);
+    return {
+      session: iSid >= 0 ? String(c[iSid]) : '?',
+      who: iWho >= 0 ? c[iWho] : '',
+      ts: iTs >= 0 ? c[iTs] : null,
+      lat: num(c[iLat]), lon: num(c[iLon]),
+      acc: iAcc >= 0 ? num(c[iAcc]) : null,
+      speed: iSpd >= 0 ? num(c[iSpd]) : null,
+    };
+  }).filter(p => p.lat !== null && p.lon !== null);
+}
+
+function parseGeojson(obj) {
+  const points = [], lines = [];
+  for (const f of (obj.features || [])) {
+    const g = f.geometry || {}, p = f.properties || {};
+    if (g.type === 'Point') {
+      points.push({
+        session: String(p.session_id ?? '?'), who: p.participant || '', ts: p.ts || null,
+        lat: g.coordinates[1], lon: g.coordinates[0],
+        acc: p.accuracy_m ?? null, speed: p.speed ?? null,
+      });
+    } else if (g.type === 'LineString') {
+      lines.push({ session: String(p.session_id ?? '?'), who: p.participant || '', coords: g.coordinates });
+    }
+  }
+  return { points, lines };
+}
+
+function parseFile(name, text) {
+  if (/\.csv$/i.test(name)) return { points: parseCsv(text), lines: [] };
+  return parseGeojson(JSON.parse(text));
+}
+
+/* ============================================================
+   GEOMETRY / STATS
+   ============================================================ */
+function metres(a, b) {                       // haversine, good enough at walking scale
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const s = Math.sin(dLat / 2) ** 2 +
+            Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+function median(xs) {
+  const v = xs.filter(x => x !== null && x !== undefined).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+/** Group the flat point list per session, in time order, with derived stats. */
+function bySession(points) {
+  const groups = new Map();
+  for (const p of points) {
+    if (!groups.has(p.session)) groups.set(p.session, []);
+    groups.get(p.session).push(p);
+  }
+  const out = [];
+  let hue = 0;
+  for (const [session, pts] of [...groups.entries()].sort((a, b) => (+a[0] || 0) - (+b[0] || 0))) {
+    pts.sort((a, b) => new Date(a.ts || 0) - new Date(b.ts || 0));
+    let dist = 0;
+    for (let i = 1; i < pts.length; i++) dist += metres(pts[i - 1], pts[i]);
+    const t0 = pts[0].ts ? new Date(pts[0].ts) : null;
+    const t1 = pts[pts.length - 1].ts ? new Date(pts[pts.length - 1].ts) : null;
+    out.push({
+      session, who: pts[0].who, pts,
+      colour: SESSION_HUES[hue++ % SESSION_HUES.length],
+      dist, minutes: (t0 && t1) ? (t1 - t0) / 60000 : null,
+      medAcc: median(pts.map(p => p.acc)),
+      t0, t1,
+    });
+  }
+  return out;
+}
+
+/* ============================================================
+   RENDERING
+   ============================================================ */
+let SESSIONS = [];                 // all loaded sessions
+const shown = new Set();           // session ids currently visible
+let accLimit = null;               // metres, or null for "no limit"
+let colourMode = 'time';
+
+const ACC_RAMP = ['#1f9d6b', '#d4a017', '#e0603a', '#b3261e'];   // 0-10, 10-25, 25-50, 50+
+const TIME_RAMP = ['#bcd2fb', '#2f6df6', '#123a8f'];             // start -> finish
+
+function visiblePoints(s) {
+  return accLimit === null ? s.pts
+    : s.pts.filter(p => p.acc === null || p.acc <= accLimit);
+}
+
+function toFeatures() {
+  const pointFeats = [], lineFeats = [];
+  for (const s of SESSIONS) {
+    if (!shown.has(s.session)) continue;
+    const pts = visiblePoints(s);
+    pts.forEach((p, i) => {
+      pointFeats.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+        properties: {
+          session: s.session, who: p.who || s.who, ts: p.ts || '', colour: s.colour,
+          acc: p.acc === null ? -1 : p.acc,
+          speed: p.speed === null ? -1 : p.speed,
+          // normalised position in the walk, drives the time colour ramp
+          t: pts.length > 1 ? i / (pts.length - 1) : 0,
+          idx: i + 1, total: pts.length,
+        },
+      });
+    });
+    if (pts.length > 1) {
+      lineFeats.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: pts.map(p => [p.lon, p.lat]) },
+        properties: { session: s.session, colour: s.colour },
+      });
+    }
+  }
+  return {
+    points: { type: 'FeatureCollection', features: pointFeats },
+    lines: { type: 'FeatureCollection', features: lineFeats },
+  };
+}
+
+function circleColour() {
+  if (colourMode === 'session') return ['get', 'colour'];
+  if (colourMode === 'acc') {
+    return ['case',
+      ['<', ['get', 'acc'], 0], '#9aa4ae',                  // accuracy not reported
+      ['step', ['get', 'acc'], ACC_RAMP[0], 10, ACC_RAMP[1], 25, ACC_RAMP[2], 50, ACC_RAMP[3]]];
+  }
+  return ['interpolate', ['linear'], ['get', 't'],
+          0, TIME_RAMP[0], 0.5, TIME_RAMP[1], 1, TIME_RAMP[2]];
+}
+
+// Reading a local file is far faster than initialising the map, so a drop can
+// land before the style is ready — and addSource() throws in that window.
+// Remember the request and replay it once the map reports itself loaded.
+let mapReady = false;
+let drawPending = false;
+map.on('load', () => {
+  mapReady = true;
+  if (drawPending) { drawPending = false; draw(); fitToData(); }
+  addBasemap();                 // enhancement, added after the trace can be drawn
+});
+// A tile or font request that fails must not take the page down with it.
+map.on('error', e => {
+  console.warn('map error (trace is unaffected):', e && e.error ? e.error.message : e);
+  el('offline').hidden = false;
+});
+
+function draw() {
+  if (!mapReady) { drawPending = true; renderStats(); return 0; }
+  const data = toFeatures();
+  if (!map.getSource('trace-lines')) {
+    map.addSource('trace-lines', { type: 'geojson', data: data.lines });
+    map.addSource('trace-points', { type: 'geojson', data: data.points });
+    map.addLayer({
+      id: 'trace-line', type: 'line', source: 'trace-lines',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['get', 'colour'], 'line-width': 3, 'line-opacity': 0.75 },
+    });
+    map.addLayer({
+      id: 'trace-point', type: 'circle', source: 'trace-points',
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 2.5, 15, 4, 18, 7],
+        'circle-color': circleColour(),
+        'circle-stroke-width': 0.8, 'circle-stroke-color': '#ffffff',
+      },
+    });
+    map.on('click', 'trace-point', e => {
+      const p = e.features[0].properties;
+      const when = p.ts ? new Date(p.ts).toLocaleString() : 'unknown time';
+      const acc = p.acc >= 0 ? `${(+p.acc).toFixed(1)} m` : 'not reported';
+      const spd = p.speed >= 0 ? `${(p.speed * 3.6).toFixed(1)} km/h` : 'not reported';
+      new maplibregl.Popup({ offset: 8 })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div style="font:12px system-ui"><b>Session ${p.session}</b>`
+               + `${p.who ? ' · ' + p.who : ''}<br>${when}<br>`
+               + `fix ${p.idx}/${p.total}<br>accuracy ${acc}<br>speed ${spd}</div>`)
+        .addTo(map);
+    });
+    map.on('mouseenter', 'trace-point', () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', 'trace-point', () => map.getCanvas().style.cursor = '');
+  } else {
+    map.getSource('trace-lines').setData(data.lines);
+    map.getSource('trace-points').setData(data.points);
+    map.setPaintProperty('trace-point', 'circle-color', circleColour());
+  }
+  renderStats();
+  return data.points.features.length;
+}
+
+function fitToData() {
+  const b = new maplibregl.LngLatBounds();
+  let any = false;
+  for (const s of SESSIONS) {
+    if (!shown.has(s.session)) continue;
+    for (const p of visiblePoints(s)) { b.extend([p.lon, p.lat]); any = true; }
+  }
+  if (any) map.fitBounds(b, { padding: 60, maxZoom: 17, duration: 600 });
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+const el = id => document.getElementById(id);
+
+function renderSessionList() {
+  el('sessions').innerHTML = '';
+  for (const s of SESSIONS) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = shown.has(s.session); cb.id = 'cb-' + s.session;
+    cb.onchange = () => { cb.checked ? shown.add(s.session) : shown.delete(s.session); draw(); };
+    const sw = document.createElement('span');
+    sw.className = 'swatch'; sw.style.background = s.colour;
+    const lab = document.createElement('label');
+    lab.htmlFor = cb.id;
+    lab.innerHTML = `Session ${s.session}${s.who ? ' · ' + s.who : ''}`;
+    row.append(cb, sw, lab);
+    el('sessions').appendChild(row);
+  }
+}
+
+function renderStats() {
+  const rows = SESSIONS.filter(s => shown.has(s.session)).map(s => {
+    const kept = visiblePoints(s).length;
+    const km = (s.dist / 1000).toFixed(2);
+    const min = s.minutes === null ? '—' : s.minutes.toFixed(0);
+    const acc = s.medAcc === null ? '—' : s.medAcc.toFixed(0) + ' m';
+    const dropped = s.pts.length - kept;
+    return `<tr><td>${s.session}</td><td>${kept}${dropped ? ` <span class="muted">(−${dropped})</span>` : ''}</td>`
+         + `<td>${min}</td><td>${km}</td><td>${acc}</td></tr>`;
+  });
+  el('stats').innerHTML =
+    '<tr><th>Session</th><th>Fixes</th><th>Min</th><th>km</th><th>Median acc.</th></tr>' + rows.join('');
+  const total = SESSIONS.reduce((n, s) => n + s.pts.length, 0);
+  el('note').textContent = `${total} fixes loaded across ${SESSIONS.length} session(s). `
+    + 'Distance is the sum of straight lines between fixes, so it slightly overshoots a smooth walk.';
+}
+
+function renderRamp() {
+  if (colourMode === 'session') {
+    const cols = SESSIONS.filter(s => shown.has(s.session)).map(s => s.colour);
+    el('ramp').style.background = cols.length > 1
+      ? `linear-gradient(90deg, ${cols.map((c, i) => `${c} ${(i / cols.length) * 100}%, ${c} ${((i + 1) / cols.length) * 100}%`).join(', ')})`
+      : (cols[0] || '#9aa4ae');
+    el('rampLo').textContent = ''; el('rampHi').textContent = 'per session';
+    return;
+  }
+  if (colourMode === 'acc') {
+    el('ramp').style.background = `linear-gradient(90deg, ${ACC_RAMP[0]}, ${ACC_RAMP[1]}, ${ACC_RAMP[2]}, ${ACC_RAMP[3]})`;
+    el('rampLo').textContent = 'precise'; el('rampHi').textContent = '50 m +';
+  } else {
+    el('ramp').style.background = `linear-gradient(90deg, ${TIME_RAMP[0]}, ${TIME_RAMP[1]}, ${TIME_RAMP[2]})`;
+    el('rampLo').textContent = 'start'; el('rampHi').textContent = 'end';
+  }
+}
+
+/** Entry point: hand it parsed points (also used to self-test from the console). */
+window.renderData = function (points, lines) {
+  if ((!points || !points.length) && lines && lines.length) {
+    // Only tracks.geojson was given: expand each line into pseudo-fixes so the
+    // same rendering path applies (no timestamps, hence no time ramp).
+    points = [];
+    lines.forEach(l => l.coords.forEach(c =>
+      points.push({ session: l.session, who: l.who, ts: null, lat: c[1], lon: c[0], acc: null, speed: null })));
+  }
+  if (!points || !points.length) throw new Error('no GPS points found in this file');
+  SESSIONS = bySession(points);
+  shown.clear();
+  SESSIONS.forEach(s => shown.add(s.session));
+  el('controls').hidden = false;
+  renderSessionList();
+  renderRamp();
+  draw();
+  fitToData();
+  return SESSIONS.length;
+};
+
+async function loadFiles(fileList) {
+  el('err').textContent = '';
+  try {
+    let points = [], lines = [];
+    for (const f of fileList) {
+      const parsed = parseFile(f.name, await f.text());
+      points = points.concat(parsed.points || []);
+      lines = lines.concat(parsed.lines || []);
+    }
+    window.renderData(points, lines);
+  } catch (e) {
+    el('err').textContent = 'Could not read that file: ' + e.message;
+  }
+}
+
+el('drop').onclick = () => el('file').click();
+el('file').onchange = e => loadFiles([...e.target.files]);
+['dragenter', 'dragover'].forEach(ev => el('drop').addEventListener(ev, e => {
+  e.preventDefault(); el('drop').classList.add('over');
+}));
+['dragleave', 'drop'].forEach(ev => el('drop').addEventListener(ev, e => {
+  e.preventDefault(); el('drop').classList.remove('over');
+}));
+el('drop').addEventListener('drop', e => loadFiles([...e.dataTransfer.files]));
+// Dropping anywhere on the window works too — the sidebar target is just a hint.
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files.length) loadFiles([...e.dataTransfer.files]); });
+
+el('mode').onchange = e => { colourMode = e.target.value; renderRamp(); draw(); };
+el('acc').oninput = e => {
+  const v = +e.target.value;
+  accLimit = v > 100 ? null : v;
+  el('accVal').textContent = accLimit === null ? 'no limit' : accLimit + ' m';
+  draw();
+};
+</script>
+</body>
+</html>

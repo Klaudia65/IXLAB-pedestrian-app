@@ -21,6 +21,14 @@ yarn-error.log*
 Thumbs.db
 *.swp
 
+# Study data pulled out of the database (backups and ad-hoc exports). These are
+# participants' GPS traces and profiles: pseudonymous, but still personal data.
+# They belong on the researcher's machine, never in a public git history.
+study-backup/
+gps_points.csv
+gps_points.geojson
+gps_tracks.geojson
+
 # Third-party text caches — ephemeral working data (raw blog/wiki snippets and the
 # cleaned generation inputs). Regenerable, must NOT be committed for rights reasons.
 # Only the transformative LLM summaries (cache/desc-llm-<zone>.json) are kept/tracked.
