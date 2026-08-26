@@ -14,7 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, init_db, close_db
-from app.api.v1.routes import study
+from app.api.v1.routes import study, export
 
 
 @asynccontextmanager
@@ -29,6 +29,9 @@ app = FastAPI(title="IXLAB pedestrian API", lifespan=lifespan)
 
 # study telemetry: the write side of the API (session, gps, sliders, ...)
 app.include_router(study.router)
+# study data export: read-only CSV/GeoJSON pull, guarded by its own key. Exists so
+# the data can be retrieved over HTTPS from networks that block Postgres' port.
+app.include_router(export.router)
 
 # the web map is served from another origin (port 8731) -> allow cross-origin calls
 app.add_middleware(

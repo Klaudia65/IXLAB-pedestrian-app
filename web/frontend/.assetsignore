@@ -1,0 +1,63 @@
+# Files in this directory that must NOT be published by `wrangler deploy`.
+# Wrangler reads this file (gitignore syntax) from the [assets] directory and
+# skips everything it matches, so the prototypes stay in git for reference
+# without being served on the public URL.
+#
+# What ships is only what web/frontend/seoul-walk.html actually loads:
+#   seoul-walk.html, config.js, app/*.jsx + app/api.js + app/swipe-data.js,
+#   assets/, and the six data files fetched at runtime:
+#     dong-jongno.geojson, nature-paths-jongno.geojson,
+#     scores-named-streets-jongno.geojson, street-character-jongno.geojson,
+#     street-character-locals-jongno.geojson, walk-net-jongno.json
+# That is ~12 MB instead of ~51 MB, and no exploratory map is reachable online.
+#
+# Verified against every literal fetch() in app/*.jsx — none of the paths below
+# is referenced by the app. Re-check this list if you add a new data layer.
+
+# --- exploratory / debug maps, superseded by the app ------------------------
+_verify-local-chain.html
+local-chain-jongno.html
+map-compare.html
+map-with-paths-only.html
+map-with-paths-only-osm-and-seoulcity.html
+map-with-pois-test.html
+maquette-itineraire.html
+maquette-itineraire-ouvert.html
+park-greenery-2btn.html
+park-greenery-controls.html
+park-greenery-slider.html
+park-nature-paths.html
+park-v2-compare.html
+scores-5streets-jongno.html
+scores-streets-jongno.html
+street-character-jongno.html
+street-character-locals-jongno.html
+wander-mode-sketch.html
+zone-jongno.html
+seoul-walk - Copy.html
+
+# --- dead app modules: loaded by no HTML page --------------------------------
+app/map.jsx
+app/map2.jsx
+
+# --- data layers no page in the app fetches ----------------------------------
+commerces-jongno.geojson
+green-jongno.geojson
+network-osm.geojson
+network-osm-jongno.geojson
+network-seoul.geojson
+network-seoul-jongno.geojson
+park-v2-preview-jongno.geojson
+paths.geojson
+scores-historic-contemporary-jongno.geojson
+scores-local-chain-jongno.geojson
+scores-quiet-lively-14h-jongno.geojson
+scores-quiet-lively-19h-jongno.geojson
+scores-raw-polished-jongno.geojson
+scores-touristy-local-jongno.geojson
+
+# --- local dev tooling and notes, not part of the app ------------------------
+serve.py
+*.md
+screenshots/
+uploads/

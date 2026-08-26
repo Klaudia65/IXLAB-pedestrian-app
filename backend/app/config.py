@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # If unset, the write endpoints are open (fine for local dev; set before
     # deploying the study publicly).
     study_write_key: str | None = None
+    # Separate secret for the READ/export endpoints (X-Export-Key header). Kept
+    # apart from study_write_key on purpose: that one ships to every phone inside
+    # the public frontend config.js, whereas this one stays server-side only.
+    # If unset: exports are allowed in debug (local dev) and refused otherwise.
+    study_export_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

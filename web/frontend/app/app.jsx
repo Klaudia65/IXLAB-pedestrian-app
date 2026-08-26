@@ -264,6 +264,37 @@ function publishGps(status, fix) {
   window.SeoulGps = { status: status, fix: fix || null };
   try { window.dispatchEvent(new CustomEvent('seoulwalk:gps', { detail: window.SeoulGps })); } catch (e) {}
 }
+
+/* ---- device compass -------------------------------------------------------
+   Which way the phone is POINTING, published exactly like the GPS fix so the map
+   can mount and unmount without owning the sensor. The map draws it as a small
+   triangle on the "you are here" puck: standing at a junction, knowing your dot
+   is not enough to tell which street on screen is the one in front of you.
+   Sources, best first:
+     · iOS Safari      → webkitCompassHeading, already a bearing from true north
+     · Android Chrome  → 'deviceorientationabsolute', bearing = 360 - alpha
+     · no magnetometer → GPS course over ground, but only while actually moving
+   The alpha conversion assumes the phone is held roughly flat, like a paper map —
+   which is how you hold it when you are reading one. Readings are corrected for
+   how the phone is turned in the hand (screen.orientation.angle) and low-pass
+   filtered: a raw magnetometer wobbles several degrees, and a triangle that
+   twitches is worse than one that lags slightly. */
+const HEAD_SMOOTH = 0.25;      // weight of each new reading in the low-pass filter
+const HEAD_MIN_DELTA = 2;      // degrees — below this, don't bother the map at all
+const HEAD_MIN_SPEED = 0.7;    // m/s — under a slow walk, GPS course is just noise
+
+function publishHeading(deg) {
+  window.SeoulHeading = (typeof deg === 'number') ? { deg: deg } : null;
+  try { window.dispatchEvent(new CustomEvent('seoulwalk:heading', { detail: window.SeoulHeading })); } catch (e) {}
+}
+// Blend along the SHORTEST turn, so 359° → 1° moves two degrees clockwise instead
+// of sweeping the long way round the dial.
+function headBlend(prev, next, w) {
+  if (prev == null) return next;
+  const d = ((next - prev + 540) % 360) - 180;
+  return (prev + d * w + 360) % 360;
+}
+function headDelta(a, b) { return Math.abs(((a - b + 540) % 360) - 180); }
 // Rough metres between two fixes — the same flat approximation used across the map
 // code, ample at city scale.
 function gpsMetres(a, b) {
@@ -361,7 +392,12 @@ function App() {
     const watchId = navigator.geolocation.watchPosition(
       pos => {
         const c = pos.coords;
-        const fix = { lng: c.longitude, lat: c.latitude, acc: c.accuracy, ts: pos.timestamp };
+        // spd/hdg are published too, not just logged: they are the fallback heading
+        // for a phone with no magnetometer (see the compass watch below).
+        const fix = {
+          lng: c.longitude, lat: c.latitude, acc: c.accuracy, ts: pos.timestamp,
+          spd: gpsNum(c.speed), hdg: gpsNum(c.heading),
+        };
         publishGps(inJongno(fix.lng, fix.lat) ? 'live' : 'outside', fix);
         if (!S || !S.logGps || !nearStudyZone(fix.lng, fix.lat)) return;
         // Thin the stream: watchPosition can fire several times per second, which
@@ -372,7 +408,7 @@ function App() {
         lastKept = fix;
         S.logGps({
           ts: new Date(fix.ts).toISOString(), lat: fix.lat, lng: fix.lng,
-          accuracy_m: gpsNum(fix.acc), speed: gpsNum(c.speed), heading: gpsNum(c.heading),
+          accuracy_m: gpsNum(fix.acc), speed: fix.spd, heading: fix.hdg,
         });
       },
       err => { console.warn('[gps] ' + err.code + ' ' + err.message); publishGps('off', null); },
@@ -389,6 +425,77 @@ function App() {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onHide);
       flush();
+    };
+  }, [sessionReady]);
+
+  // Compass watch — see the notes above publishHeading. Gated on the session like the
+  // GPS watch so iOS's permission prompt lands after consent, not on the landing screen.
+  React.useEffect(() => {
+    if (!sessionReady) return;
+    const DOE = window.DeviceOrientationEvent;
+    let smooth = null, sent = null, sensor = false;
+    const teardown = [];
+
+    // How far the phone is turned in the hand relative to the screen it's drawing.
+    const screenAngle = () => {
+      const so = window.screen && window.screen.orientation;
+      if (so && typeof so.angle === 'number') return so.angle;
+      return (typeof window.orientation === 'number') ? window.orientation : 0;
+    };
+    // `deg` is always a true bearing by the time it gets here.
+    const push = deg => {
+      if (typeof deg !== 'number' || !isFinite(deg)) return;
+      smooth = headBlend(smooth, (deg % 360 + 360) % 360, HEAD_SMOOTH);
+      if (sent != null && headDelta(smooth, sent) < HEAD_MIN_DELTA) return;
+      sent = smooth;
+      publishHeading(smooth);
+    };
+    const onOrient = e => {
+      // iOS hands us the bearing directly; Android gives alpha, counter-clockwise
+      // from north, but ONLY absolute readings are a compass at all.
+      let raw = null;
+      if (typeof e.webkitCompassHeading === 'number' && isFinite(e.webkitCompassHeading)) raw = e.webkitCompassHeading;
+      else if (e.absolute === true && typeof e.alpha === 'number') raw = 360 - e.alpha;
+      if (raw == null) return;
+      sensor = true;
+      push(raw + screenAngle());
+    };
+    // Fallback while walking: the direction of travel is not the direction the phone
+    // faces, but it beats no triangle — and a real compass takes over the moment one
+    // reports. Only trusted above a slow-walk speed, since a stationary GPS "course"
+    // is pure noise.
+    const onGps = () => {
+      if (sensor) return;
+      const f = (window.SeoulGps || {}).fix;
+      if (!f || f.hdg == null || f.spd == null || f.spd < HEAD_MIN_SPEED) return;
+      push(f.hdg);
+    };
+
+    const listen = () => {
+      window.addEventListener('deviceorientationabsolute', onOrient, true);
+      window.addEventListener('deviceorientation', onOrient, true);
+      teardown.push(() => {
+        window.removeEventListener('deviceorientationabsolute', onOrient, true);
+        window.removeEventListener('deviceorientation', onOrient, true);
+      });
+    };
+    if (DOE && typeof DOE.requestPermission === 'function') {
+      // iOS only grants the compass from a user gesture, so we ride the participant's
+      // first tap rather than adding a button they'd have to be told about.
+      const ask = () => {
+        window.removeEventListener('pointerdown', ask);
+        DOE.requestPermission().then(r => { if (r === 'granted') listen(); }).catch(() => {});
+      };
+      window.addEventListener('pointerdown', ask);
+      teardown.push(() => window.removeEventListener('pointerdown', ask));
+    } else if (DOE) {
+      listen();
+    }
+    window.addEventListener('seoulwalk:gps', onGps);
+    return () => {
+      teardown.forEach(f => f());
+      window.removeEventListener('seoulwalk:gps', onGps);
+      publishHeading(null);      // the map must drop the triangle, not freeze it
     };
   }, [sessionReady]);
 

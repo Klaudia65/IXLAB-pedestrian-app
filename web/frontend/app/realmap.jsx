@@ -34,6 +34,19 @@ const MAP_PAL = {
 // Jongno pilot bbox [W,S,E,N] — same zone as zone-jongno.html
 const JONGNO_BBOX = [126.97869, 37.56623, 127.01052, 37.58646];
 
+/* ---- "you are here" puck geometry ----------------------------------------
+   The marker element is a transparent square CENTRED on the fix: the dot sits in
+   the middle and the heading triangle just above it, so rotating the whole square
+   about its centre aims the triangle without moving the dot. The box therefore has
+   to be wide enough for the dot (18px) plus its 6px halo plus the triangle. */
+const PUCK_BOX = 64;
+const PUCK_CONE_SVG =
+  '<svg width="' + PUCK_BOX + '" height="' + PUCK_BOX + '" viewBox="0 0 64 64">' +
+  // tip at the top edge, base clearing the dot's halo; white outline so it reads
+  // on any basemap, exactly like the dot's white border
+  '<path d="M32 1.5 L41 15.5 L23 15.5 Z" fill="currentColor" stroke="#fff" ' +
+  'stroke-width="2.5" stroke-linejoin="round" /></svg>';
+
 // OpenFreeMap vector base, repainted in the teal canvas so the map reads as
 // part of the app rather than a generic Google-grey tile sheet.
 function buildBaseStyle() {
@@ -1782,6 +1795,9 @@ function RealMapScreen({ go }) {
   const gpsStatusRef = React.useRef('pending'); // 'pending'|'live'|'outside'|'off'
   const gpsCenteredRef = React.useRef(false);   // recentre only on the FIRST usable fix
   const demoNoticeRef = React.useRef(false);    // "outside the zone" popup shown once
+  const headingRef = React.useRef(null);        // compass bearing of the phone (deg), or null
+  const puckDotRef = React.useRef(null);        // the circle inside the puck (recoloured in demo mode)
+  const puckConeRef = React.useRef(null);       // the heading triangle (hidden with no compass)
   const greenModeRef = React.useRef(readGreenMode()); // 'off' | 'leafy' | 'park'
   const natureMarkersRef = React.useRef([]);          // green name bubbles for park walks
   const localsIdxRef = React.useRef({});   // street name → LLM ambiance sentence {ko, en}
@@ -2111,6 +2127,7 @@ function RealMapScreen({ go }) {
     return () => {
       cancelled = true; map.remove(); mapRef.current = null;
       puckRef.current = null; puckPopupRef.current = null;   // destroyed with the map
+      puckDotRef.current = null; puckConeRef.current = null; // (their DOM went with it)
     };
   }, []);
 
@@ -2141,13 +2158,33 @@ function RealMapScreen({ go }) {
   // and then mutated in place rather than re-rendered.
   function makePuck(map) {
     if (puckRef.current) return;
+    // Transparent square wrapper — see PUCK_BOX. It must not swallow taps meant for
+    // the streets underneath, so only the dot itself is clickable; the click still
+    // bubbles up to the marker element, which is what opens the popup.
     const el = document.createElement('div');
-    el.style.cssText = 'width:18px;height:18px;border-radius:50%;background:' + MAP_PAL.accent +
+    el.style.cssText = 'position:relative;width:' + PUCK_BOX + 'px;height:' + PUCK_BOX +
+      'px;pointer-events:none;';
+    // The heading triangle. `currentColor` so recolouring it in demo mode is one
+    // style write on the wrapper, and display:none until a compass reading exists.
+    const cone = document.createElement('div');
+    cone.style.cssText = 'position:absolute;inset:0;display:none;line-height:0;color:' + MAP_PAL.accent + ';';
+    cone.innerHTML = PUCK_CONE_SVG;
+    const dot = document.createElement('div');
+    dot.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);' +
+      'width:18px;height:18px;border-radius:50%;pointer-events:auto;cursor:pointer;background:' + MAP_PAL.accent +
       ';border:3px solid #fff;box-shadow:0 0 0 6px ' + MAP_PAL.accent + '33, 0 2px 6px rgba(0,0,0,.4);';
-    puckPopupRef.current = new maplibregl.Popup({ offset: 14, maxWidth: '240px' });
-    puckRef.current = new maplibregl.Marker({ element: el }).setLngLat(FAKE_GPS)
-      .setPopup(puckPopupRef.current).addTo(map);
+    el.appendChild(cone); el.appendChild(dot);
+    puckConeRef.current = cone; puckDotRef.current = dot;
+    puckPopupRef.current = new maplibregl.Popup({ offset: 20, maxWidth: '240px' });
+    // rotationAlignment 'map' → the angle we hand to setRotation is a TRUE bearing,
+    // so the triangle keeps pointing the right way even if the participant
+    // two-finger-rotates the map. pitchAlignment stays on the viewport so the puck
+    // is never drawn lying flat.
+    puckRef.current = new maplibregl.Marker({
+      element: el, rotationAlignment: 'map', pitchAlignment: 'viewport',
+    }).setLngLat(FAKE_GPS).setPopup(puckPopupRef.current).addTo(map);
     renderPuck();                 // a fix may have arrived before the map was ready
+    renderHeading();              // …and so may a compass reading
   }
 
   // Move the puck to wherever "you" are and keep its popup honest. Only a 'live' fix
@@ -2164,12 +2201,15 @@ function RealMapScreen({ go }) {
     puck.setLngLat(demo || (live ? [fix.lng, fix.lat] : FAKE_GPS));
     // amber puck while a demo start is in force, matching its badge — on a phone in
     // the field, the marker itself must say "this is not your real position".
-    const pel = puck.getElement();
-    if (pel) {
-      const c = demo ? '#E0A11B' : MAP_PAL.accent;
-      pel.style.background = c;
-      pel.style.boxShadow = '0 0 0 6px ' + c + '33, 0 2px 6px rgba(0,0,0,.4)';
+    const c = demo ? '#E0A11B' : MAP_PAL.accent;
+    const dot = puckDotRef.current;
+    if (dot) {
+      dot.style.background = c;
+      dot.style.boxShadow = '0 0 0 6px ' + c + '33, 0 2px 6px rgba(0,0,0,.4)';
     }
+    // the triangle follows the dot's colour — the compass is real either way, but a
+    // blue arrow on an amber puck would read as two different things.
+    if (puckConeRef.current) puckConeRef.current.style.color = c;
     if (pop) {
       pop.setHTML(
         demo ? '<b>Demo start</b><br>Placed by hand — walks depart from here, whatever the GPS says.'
@@ -2189,6 +2229,35 @@ function RealMapScreen({ go }) {
       map.easeTo({ center: [fix.lng, fix.lat], zoom: Math.max(map.getZoom(), 15.4), duration: 700 });
     }
   }
+
+  // Aim the triangle at whatever the compass says. Rotating the marker rotates the
+  // dot too, but a circle looks the same at every angle, so nothing else moves.
+  function renderHeading() {
+    const puck = puckRef.current, cone = puckConeRef.current;
+    if (!puck || !cone) return;
+    const h = headingRef.current;
+    // No compass → no triangle. An arrow frozen at north would be worse than none:
+    // the participant would trust it and walk the wrong way.
+    if (h == null) { cone.style.display = 'none'; return; }
+    cone.style.display = 'block';
+    puck.setRotation(h);
+  }
+
+  /* ---- which way the phone is pointing --------------------------------------
+     "You are here" is not enough at a junction: the participant still has to work
+     out which of the streets in front of them is the one on screen. The compass
+     watch lives in App (app.jsx) next to the GPS watch, so it survives leaving the
+     map screen; here we only draw what it publishes on 'seoulwalk:heading'. */
+  React.useEffect(() => {
+    const apply = () => {
+      const h = window.SeoulHeading;
+      headingRef.current = (h && typeof h.deg === 'number') ? h.deg : null;
+      renderHeading();
+    };
+    apply();      // remounting the screen must not lose a heading already known
+    window.addEventListener('seoulwalk:heading', apply);
+    return () => window.removeEventListener('seoulwalk:heading', apply);
+  }, []);
 
   // Where the proposed walk departs from. Called both when the graph lands and on
   // every fix, so whichever arrives first the other one still updates it.
