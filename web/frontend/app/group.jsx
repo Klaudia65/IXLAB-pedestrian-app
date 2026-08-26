@@ -438,6 +438,18 @@ function GroupScreen({ go }) {
   // showed a top-6 that changed under every tap. The streets AND the walks that join
   // them are computed once, when 'Find our spot' is pressed — see findOurSpot below.
 
+  // Someone dragging a cursor on another phone is the one state that goes stale on its
+  // own: it is true until a later poll says otherwise, and if that phone never speaks
+  // again (locked, closed, out of signal) no event will ever arrive to re-render this
+  // screen. settlementMoving() stops trusting the flag after a few seconds — but only a
+  // render can show that, so while anything reads as moving we tick until it doesn't.
+  const anyMoving = liveAxes.some(a => a.moving);
+  React.useEffect(() => {
+    if (!anyMoving) return;
+    const timer = setInterval(() => bump(x => x + 1), 1000);
+    return () => clearInterval(timer);
+  }, [anyMoving]);
+
   // A trade needs two disagreements still on the table.
   const trade = React.useMemo(
     () => (gt.axes ? window.proposeTrade(gt.axes, memberIds) : null), [rev]);   // eslint-disable-line react-hooks/exhaustive-deps

@@ -2659,10 +2659,24 @@ function RealMapScreen({ go }) {
   }
 
   // Draw a route somebody else picked, exactly as they see it.
+  //
+  // Following is an INTERRUPTION: it re-frames the camera and throws the steps sheet
+  // open. That is right the first time the leader picks — and wrong every time after,
+  // because the walker may well have closed the sheet to read the map. So a pick is
+  // followed once, keyed on which pick it is; the same one arriving again (a re-poll, a
+  // re-mount, a re-emit) is a no-op that leaves the screen exactly as the walker left it.
+  const followedPickRef = React.useRef(null);
+  function pickToken(entry) {
+    const at = entry.at != null ? Date.parse(entry.at) : null;
+    return String(entry.walk_id) + '|' + (at != null && !isNaN(at) ? at : String(entry.at || ''));
+  }
   function followSharedRoute(entry) {
     if (!entry || !entry.route) return false;
     const map = mapRef.current;
     if (!map || !map.getSource('route')) return false;
+    const token = pickToken(entry);
+    if (followedPickRef.current === token) return true;   // already on screen — don't grab it back
+    followedPickRef.current = token;
     setShowSliders(false);
     chooseWalk(entry.route, -1, { by: memberName(entry.by) });
     return true;
@@ -2698,6 +2712,7 @@ function RealMapScreen({ go }) {
       if (!entry || !entry.route) {
         if (routeFrom) setStatus('The leader is looking at other options…');
         setRouteFrom(null);
+        followedPickRef.current = null;   // the next pick is a real one again, even if it repeats this one
         return;
       }
       if (entry.mine) return;                                       // it's already on my map

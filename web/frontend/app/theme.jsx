@@ -487,6 +487,22 @@ function writeSettlements(all, patch, meta) {
   try { window.dispatchEvent(new CustomEvent('seoulwalk:groupsettle', { detail: { settlements: all } })); } catch (e) {}
   return all;
 }
+// Every mutation below is written the same way: compute the new document from whatever
+// is on this phone RIGHT NOW, keep it, and push the patch. `step` is that computation,
+// handed to the API as well so it can be re-run against the server's document when two
+// phones wrote at once — otherwise the phone that lost the race quietly loses the tap
+// too, which is exactly how an acceptance went missing.
+function commitSettlement(step, meta) {
+  const first = step();
+  if (!first) return readSettlements();
+  return writeSettlements(first.all, first.patch, { ...meta, rebuild: () => {
+    const again = step();
+    if (!again) return null;
+    swWrite(SETTLE_KEY, again.all);
+    try { window.dispatchEvent(new CustomEvent('seoulwalk:groupsettle', { detail: { settlements: again.all } })); } catch (e) {}
+    return again.patch;
+  } });
+}
 // Every axis a settlement covers: on its own, or the whole bargain when it is a trade.
 function dealKeys(all, axis) {
   const s = all[axis];
@@ -494,13 +510,18 @@ function dealKeys(all, axis) {
   return s.deal ? Object.keys(all).filter(k => all[k] && all[k].deal === s.deal) : [axis];
 }
 function setSettlement(axis, s) {
-  const all = readSettlements();
-  // Proposing is accepting: the proposer is seeded into `accepts` so they never have to
-  // confirm their own offer, and a settlement that asks nobody is agreed the moment it
-  // is made.
-  const rec = s ? { ...s, moving: false, accepts: s.accepts || (s.by ? [s.by] : []) } : null;
-  if (rec) all[axis] = rec; else delete all[axis];
-  return writeSettlements(all, { [axis]: rec }, { action: rec ? 'propose' : 'undo', axis });
+  // An offer supersedes the drag that produced it, so any move still sitting in the
+  // throttle must not land afterwards — see cancelPendingMove.
+  cancelPendingMove();
+  return commitSettlement(() => {
+    const all = readSettlements();
+    // Proposing is accepting: the proposer is seeded into `accepts` so they never have to
+    // confirm their own offer, and a settlement that asks nobody is agreed the moment it
+    // is made.
+    const rec = s ? { ...s, moving: false, accepts: s.accepts || (s.by ? [s.by] : []) } : null;
+    if (rec) all[axis] = rec; else delete all[axis];
+    return { all, patch: { [axis]: rec } };
+  }, { action: s ? 'propose' : 'undo', axis });
 }
 
 // Live cursor. While a finger is down the position is pushed to the others, throttled,
@@ -509,7 +530,17 @@ function setSettlement(axis, s) {
 // given to one spot is not consent to the next one. `moving` lets the other screens say
 // who is dragging rather than announcing an offer on every frame.
 const WALK_MOVE_MS = 250;
+// A move that is still waiting on the throttle when the gesture ENDS must never be sent.
+// Letting go writes the offer with moving:false, and a queued frame landing a fraction of
+// a second later put moving:true back on top of it — with no finger anywhere to take it
+// off again. The other phones then sat on "someone is moving the cursor…" forever, which
+// hides the accept button and blocks agreement outright (settlementAgreed refuses to
+// close a settlement while it is moving). So every settlement write drops the queue first.
 let _moveAt = 0, _moveTimer = null, _movePending = null;
+function cancelPendingMove() {
+  if (_moveTimer) { clearTimeout(_moveTimer); _moveTimer = null; }
+  _movePending = null;
+}
 function moveSettlement(axis, value, by) {
   _movePending = { axis, value, by };
   const send = () => {
@@ -518,8 +549,11 @@ function moveSettlement(axis, value, by) {
     _moveAt = Date.now();
     if (!m) return;
     const all = readSettlements();
+    // `movedAt` is the belt to cancelPendingMove's braces: a phone that goes away
+    // mid-drag (locked, closed, out of signal) can still strand the flag, and without a
+    // timestamp nobody left in the group could ever tell that nothing is moving any more.
     const rec = { ...(all[m.axis] || {}), how: 'point', value: m.value, by: m.by,
-      moving: true, accepts: m.by ? [m.by] : [] };
+      moving: true, movedAt: Date.now(), accepts: m.by ? [m.by] : [] };
     all[m.axis] = rec;
     writeSettlements(all, { [m.axis]: rec }, { action: 'move', axis: m.axis });
   };
@@ -532,45 +566,65 @@ function moveSettlement(axis, value, by) {
   if (!_moveTimer) _moveTimer = setTimeout(() => { _moveTimer = null; send(); }, wait);
 }
 
+// Is somebody's finger REALLY on this cursor? A live drag refreshes `movedAt` four times
+// a second, so a flag older than this is a leftover, not a gesture, and the group must be
+// allowed to get on with it. Records written before `movedAt` existed are read as stale
+// for the same reason: the safe failure here is "nobody is dragging", never the opposite.
+const MOVE_STALE_MS = 6000;
+function settlementMoving(s) {
+  if (!s || !s.moving) return false;
+  return !!s.movedAt && (Date.now() - s.movedAt) < MOVE_STALE_MS;
+}
+
 // Record ONE person's acceptance. The settlement only becomes agreed once everyone it
 // asks has done this, so a three-way disagreement can't be closed by a single tap.
 // A trade is one bargain over two axes, so accepting it covers both.
 function acceptSettlement(axis, memberId) {
-  const all = readSettlements();
-  const keys = dealKeys(all, axis);
-  if (!keys.length || !memberId) return all;
-  const patch = {};
-  keys.forEach(k => {
-    const accepts = ((all[k] && all[k].accepts) || []).slice();
-    if (accepts.indexOf(memberId) < 0) accepts.push(memberId);
-    all[k] = { ...all[k], accepts, moving: false };
-    patch[k] = all[k];
-  });
-  return writeSettlements(all, patch, { action: 'accept', axis });
+  cancelPendingMove();
+  return commitSettlement(() => {
+    const all = readSettlements();
+    const keys = dealKeys(all, axis);
+    if (!keys.length || !memberId) return null;
+    const patch = {};
+    keys.forEach(k => {
+      const accepts = ((all[k] && all[k].accepts) || []).slice();
+      if (accepts.indexOf(memberId) < 0) accepts.push(memberId);
+      all[k] = { ...all[k], accepts, moving: false };
+      patch[k] = all[k];
+    });
+    return { all, patch };
+  }, { action: 'accept', axis });
 }
 
 // Hand the offer over: the other person becomes the proposer, keeping the value as the
 // starting point for their counter. Their acceptance is implied, mine is not any more.
 function counterSettlement(axis, asks) {
-  const all = readSettlements();
-  const keys = dealKeys(all, axis);
-  if (!keys.length || !asks) return all;
-  const patch = {};
-  keys.forEach(k => {
-    all[k] = { ...all[k], by: asks, accepts: [asks], moving: false };
-    patch[k] = all[k];
-  });
-  return writeSettlements(all, patch, { action: 'counter', axis });
+  cancelPendingMove();
+  return commitSettlement(() => {
+    const all = readSettlements();
+    const keys = dealKeys(all, axis);
+    if (!keys.length || !asks) return null;
+    const patch = {};
+    keys.forEach(k => {
+      all[k] = { ...all[k], by: asks, accepts: [asks], moving: false };
+      patch[k] = all[k];
+    });
+    return { all, patch };
+  }, { action: 'counter', axis });
 }
 function clearSettlement(axis) {
-  const all = readSettlements();
-  const keys = dealKeys(all, axis);
-  if (!keys.length) return all;
-  const patch = {};
-  keys.forEach(k => { delete all[k]; patch[k] = null; });
-  return writeSettlements(all, patch, { action: 'undo', axis });
+  cancelPendingMove();
+  return commitSettlement(() => {
+    const all = readSettlements();
+    const keys = dealKeys(all, axis);
+    if (!keys.length) return null;
+    const patch = {};
+    keys.forEach(k => { delete all[k]; patch[k] = null; });
+    return { all, patch };
+  }, { action: 'undo', axis });
 }
 function clearGroupSettlements() {
+  cancelPendingMove();
   const patch = {};
   Object.keys(readSettlements()).forEach(k => { patch[k] = null; });
   return writeSettlements({}, Object.keys(patch).length ? patch : null, { action: 'undo' });
@@ -642,7 +696,7 @@ function settlementNeeds(s, ranges, ids, landing) {
 // `accepts` absent means a record written before per-person acceptance existed.
 function settlementAgreed(s, needed) {
   if (!s) return false;
-  if (s.moving) return false;                     // still under someone's finger
+  if (settlementMoving(s)) return false;          // still under someone's finger
   if (!s.accepts) return s.status === 'agreed';
   return (needed || []).every(id => s.accepts.indexOf(id) >= 0);
 }
@@ -798,7 +852,7 @@ function reconcileGroupAxes(userVec, membersOverride) {
       applied, pending,
       previewAt: pending ? landing : null,   // where to draw the cursor for a live offer
       turn: s ? s.by : null,                 // whose finger the cursor is under
-      moving: !!(s && s.moving),             // someone is dragging it right now
+      moving: settlementMoving(s),           // someone is dragging it right now
       // everyone this settlement still needs a yes from, and whether it needs any
       asks: needs,
       accepts: (s && s.accepts) || [],
@@ -1181,7 +1235,7 @@ Object.assign(window, {
   PERSON_HUES, tasteInitials, axisBand, axisIntersect, mergeAxisRanges,
   readSettlements, setSettlement, acceptSettlement, counterSettlement,
   moveSettlement, clearSettlement, clearGroupSettlements, defaultHow, applySettlement,
-  settlementLanding, settlementNeeds, settlementAgreed,
+  settlementLanding, settlementNeeds, settlementAgreed, settlementMoving,
   proposeTrade, myMemberId, levelsFromVector, myWalkSnapshot,
   GREEN_MODES, greenWishOf, reconcileGreenery,
   buildGroupMembers, reconcileGroupAxes, groupTarget,

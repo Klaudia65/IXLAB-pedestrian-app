@@ -326,12 +326,26 @@
       .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; })
       .catch(function (e) { console.warn('[StudyAPI] fetchWalkRoute failed', e); return null; });
   }
+  // The change token, compared as an INSTANT rather than as a string. The same
+  // timestamp reaches this file through two routes that serialise it differently —
+  // the walk carries it through a pydantic model ('...Z'), GET /route hands back the
+  // raw column ('...+00:00') — so a byte comparison of the two never matched. Every
+  // poll then looked like a brand new pick: the follower's map refetched the route,
+  // re-drew it, re-framed the camera and re-opened the steps sheet every 2.5 s, which
+  // is why only the phones that did NOT publish the route could not read the map.
+  function routeStamp(v) {
+    if (v == null) return null;
+    var t = Date.parse(v);
+    return isNaN(t) ? String(v) : t;
+  }
+  function sameRouteStamp(a, b) { return routeStamp(a) === routeStamp(b); }
+
   // Reconcile the cache with a freshly-read walk. Called from emitWalk, so every path that
   // publishes a walk keeps the route in step with it.
   function syncWalkRoute(w) {
     if (!w) { if (walkRouteCache) emitWalkRoute(null); return; }
     var at = w.route_at || null;
-    if (walkRouteCache && walkRouteCache.walk_id === w.walk_id && walkRouteCache.at === at) return;
+    if (walkRouteCache && walkRouteCache.walk_id === w.walk_id && sameRouteStamp(walkRouteCache.at, at)) return;
     if (!at) { if (walkRouteCache) emitWalkRoute(null); return; }   // the pick was cleared
     var mine = w.route_by != null && w.route_by === myParticipantId();
     if (mine) {
@@ -346,7 +360,10 @@
     fetchWalkRoute(w.walk_id).then(function (r) {
       walkRouteFetching = null;
       if (!r || !r.route) return;
-      emitWalkRoute({ walk_id: w.walk_id, at: r.at || at, by: r.by, mine: false,
+      // Cache the token the POLL will keep handing us (w.route_at), never the one the
+      // route payload came back with: the next tick compares against the walk, so the
+      // cache has to speak the walk's language or it can never report "no change".
+      emitWalkRoute({ walk_id: w.walk_id, at: at, by: r.by, mine: false,
         summary: r.summary || w.route_summary || null, route: r.route });
     }, function () { walkRouteFetching = null; });
   }
@@ -429,21 +446,40 @@
   // clear. On a version conflict the server hands back the current walk, which we
   // adopt — the other phone got there first, and re-rendering from the truth beats
   // retrying a patch built on a stale view.
+  //
+  // But adopting it is only half the answer, and `meta.rebuild` is the other half: on its
+  // own, taking their document also THREW AWAY the tap that produced this patch, with
+  // nothing on screen to say so. That is how an "accept"
+  // could disappear: two phones bargaining at once means version clashes are the normal
+  // case, not the rare one, and every clash silently un-did somebody's tap. So a caller
+  // may hand over a function that re-applies its intent on top of whatever we just
+  // adopted; we resend that, once, against the fresh version.
+  var WALK_PATCH_RETRIES = 2;
   function patchWalkState(patch, meta) {
     var wid = currentWalkId();
     if (!wid) return Promise.resolve(null);
     meta = meta || {};
-    var base = walkCache ? walkCache.version : null;
-    return scoped('/walks/' + wid + '/state', {
-      patch: patch, base_version: base, action: meta.action || null, axis: meta.axis || null
-    }).then(function (res) {
-      if (!res) return null;
-      if (res.conflict && res.walk) return emitWalk(res.walk);
-      if (res.version != null && walkCache) {
-        emitWalk(Object.assign({}, walkCache, { version: res.version, state: res.state || {} }));
-      }
-      return walkCache;
-    });
+    function attempt(p, left) {
+      var base = walkCache ? walkCache.version : null;
+      return scoped('/walks/' + wid + '/state', {
+        patch: p, base_version: base, action: meta.action || null, axis: meta.axis || null
+      }).then(function (res) {
+        if (!res) return null;
+        if (res.conflict && res.walk) {
+          emitWalk(res.walk);
+          if (left > 0 && typeof meta.rebuild === 'function') {
+            var next = meta.rebuild();
+            if (next) return attempt(next, left - 1);
+          }
+          return walkCache;
+        }
+        if (res.version != null && walkCache) {
+          emitWalk(Object.assign({}, walkCache, { version: res.version, state: res.state || {} }));
+        }
+        return walkCache;
+      });
+    }
+    return attempt(patch, WALK_PATCH_RETRIES);
   }
 
   // Adaptive cadence. A negotiation sitting still needs a slow heartbeat, but a cursor
@@ -455,9 +491,19 @@
   var walkIdleMs = WALK_POLL_IDLE, walkFastUntil = 0;
   var walkInFlight = false, walkLastAt = 0;
 
+  // Only a LIVE drag earns the fast cadence. The flag is written by the phone doing the
+  // dragging and refreshed four times a second, so one that has stopped being refreshed
+  // belongs to a phone that went away mid-gesture — and honouring it would leave every
+  // other phone polling four times a second for the rest of the walk. Same window as
+  // settlementMoving() in theme.jsx, which is what the screens read.
+  var MOVE_STALE_MS = 6000;
   function walkIsMoving(w) {
     if (!w || !w.state) return false;
-    return Object.keys(w.state).some(function (k) { return w.state[k] && w.state[k].moving; });
+    var now = Date.now();
+    return Object.keys(w.state).some(function (k) {
+      var s = w.state[k];
+      return !!(s && s.moving && s.movedAt && (now - s.movedAt) < MOVE_STALE_MS);
+    });
   }
 
   // A fixed heartbeat that decides on each beat whether it is time to fetch. The
